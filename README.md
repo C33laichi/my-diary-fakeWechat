@@ -7,6 +7,26 @@
 
 ---
 
+## 界面预览
+
+<table>
+<tr>
+<td align="center"><img src="docs/screenshots/timeline.jpg" width="190" alt="时间线"><br><sub>时间线 · 朋友圈式信息流</sub></td>
+<td align="center"><img src="docs/screenshots/nine-grid.jpg" width="190" alt="九宫格"><br><sub>九宫格配图</sub></td>
+<td align="center"><img src="docs/screenshots/fold-more.jpg" width="190" alt="折叠"><br><sub>正文超 6 行折叠，点「更多」展开</sub></td>
+</tr>
+<tr>
+<td align="center"><img src="docs/screenshots/photo-viewer.jpg" width="190" alt="大图查看器"><br><sub>大图查看器 · 双指缩放</sub></td>
+<td align="center"><img src="docs/screenshots/gallery.jpg" width="190" alt="相册"><br><sub>相册 · 按月汇总</sub></td>
+<td align="center"><img src="docs/screenshots/dark-mode.jpg" width="190" alt="深色模式"><br><sub>深色模式</sub></td>
+</tr>
+</table>
+
+<p align="center">
+<img src="docs/screenshots/landscape.png" width="460" alt="手机横屏"><br>
+<sub>手机横屏适配</sub>
+</p>
+
 ## 为什么是单文件
 
 - **不用装任何东西**：下载 `index.html`，双击，浏览器里就能写。
@@ -32,15 +52,27 @@
 | 备份 | 导出 / 导入 JSON（含图片，可原样恢复）、纯文本、Markdown |
 | 响应式 | 手机底部标签栏 → 平板居中单列 → 桌面左侧导航栏；**手机横屏单独适配** |
 
-## 直接使用（网页版）
+## 直接使用
 
-下载 [`index.html`](index.html)，双击用浏览器打开即可。不需要安装任何东西。
+三种方式，挑一种：
+
+**① 在线版（零安装）** —— 用手机或电脑浏览器直接打开：
+
+<https://c33laichi.github.io/wechat-diary/>
+
+**② 下载单文件** —— 下载 [`index.html`](index.html) 双击用浏览器打开，不需要装任何东西。
+可离线使用，也可以丢到任何静态托管上自己部署。
 
 > **小技巧**：Chrome / Edge 打开后可以「安装为应用」（地址栏右侧的安装图标），
-> 得到一个独立窗口的桌面 App，和原生应用几乎一样。
+> 得到一个独立窗口的桌面 App，和原生应用几乎一样。手机上用浏览器打开后
+> 「添加到主屏幕」也有类似效果。
 
-想放到网上也可以：它就是一个静态文件，丢到任何静态托管（GitHub Pages、对象存储、
-自家服务器）都能跑。
+**③ 安卓安装包** —— 不想自己打包就用现成的：
+
+**➡ [下载最新 APK](https://github.com/C33laichi/wechat-diary/releases/latest)**
+
+> 这是正式签名包（release）。首次安装需要在系统设置里允许「安装未知来源应用」。
+> 想自己编译也可以，见下面的「打包成手机安装包」。
 
 ## 打包成手机安装包
 
@@ -78,7 +110,6 @@ mobile/                 # Capacitor 移动端外壳（Android / iOS）
   tools/preflight.mjs   # 打包前置静态体检
   android/  ios/        # 原生工程
 _verify/                # 自动化验证脚本与界面截图
-打包成手机安装包_教程.md   # 中文图文打包教程
 ```
 
 **注意**：`index.html` 是唯一源文件。`mobile/www/index.html` 与原生工程里的
