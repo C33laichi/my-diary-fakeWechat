@@ -1,0 +1,73 @@
+# 「我的日记」iOS 云出包 —— 没有 Mac 也能出 .ipa
+#
+# 原理：GitHub 提供的 macOS 云主机上有 Xcode，本仓库的 tools/ios-prepare.mjs 在上面
+#       跑和本地一模一样的出包流程。触发方式是手动（workflow_dispatch），不会白烧额度。
+#
+# 额度提醒：私有仓库的 Actions 按 macOS = 10 倍计费，免费 2000 分钟/月 ≈ 200 分钟真实时间，
+#           一次构建 5-10 分钟，一个月能出 20-40 个包。公开仓库不限时长（但源码公开）。
+#
+# 前置：在仓库 Settings → Secrets and variables → Actions 里配 4 个 secret
+#   APPLE_TEAM_ID      10 位团队 ID（developer.apple.com/account → Membership details）
+#   APPLE_KEY_ID       App Store Connect API 密钥 ID（10 位）
+#   APPLE_ISSUER_ID    同一页面的签发方 ID（UUID）
+#   APPLE_P8           下载下来的 .p8 私钥「文件内容」（文本编辑器打开全选复制）
+#
+# 注意：本文件假设「仓库根目录 = 本 mobile 目录」。
+#       如果你把整个 wechat-diary 当仓库根，把这个文件挪到 wechat-diary/.github/workflows/，
+#       并给每个 run 步骤加 `working-directory: mobile`、checkout 不用动。
+
+name: iOS 出包
+
+on:
+  workflow_dispatch:
+    inputs:
+      method:
+        description: 分发方式（app-store-connect = 传 TestFlight/上架）
+        type: choice
+        default: app-store-connect
+        options:
+          - app-store-connect
+          - ad-hoc
+          - development
+
+jobs:
+  ipa:
+    runs-on: macos-26        # Capacitor 8 要求 Xcode 26+，老镜像跑不了
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 装依赖
+        run: npm ci
+
+      - name: 放置 App Store Connect API 密钥
+        env:
+          APPLE_P8: ${{ secrets.APPLE_P8 }}
+          APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          cat > "$RUNNER_TEMP/private_keys/AuthKey_${APPLE_KEY_ID}.p8" <<PEM
+          ${APPLE_P8}
+          PEM
+          echo "已写入 $RUNNER_TEMP/private_keys/AuthKey_${APPLE_KEY_ID}.p8"
+
+      - name: 出包
+        env:
+          APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+          APPLE_P8_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_KEY_ID }}.p8
+        run: |
+          node tools/ios-prepare.mjs --team "${{ secrets.APPLE_TEAM_ID }}" \
+            --archive --method "${{ github.event.inputs.method || 'app-store-connect' }}"
+
+      - name: 收集 .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: my-diary-ipa
+          path: ios/App/output/*.ipa
+          if-no-files-found: error

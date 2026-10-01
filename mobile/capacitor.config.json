@@ -1,0 +1,17 @@
+{
+  "appId": "com.chenchang.diary",
+  "appName": "我的日记",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "backgroundColor": "#EDEDED",
+    "allowMixedContent": false
+  },
+  "ios": {
+    "backgroundColor": "#EDEDED",
+    "contentInset": "never",
+    "preferredContentMode": "mobile"
+  }
+}

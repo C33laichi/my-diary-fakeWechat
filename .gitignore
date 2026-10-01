@@ -1,0 +1,54 @@
+# ============================================================================
+#  「我的日记」仓库忽略规则
+#  仓库根目录 = 项目目录（index.html 就在根上）
+# ============================================================================
+
+# ---------------------------------------------------------------- 依赖 / 构建产物
+node_modules/
+mobile/www/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/.gradle/
+mobile/android/.kotlin/
+mobile/android/capacitor-cordova-android-plugins/
+mobile/android/local.properties
+mobile/android/app/src/main/assets/public/
+mobile/android/app/src/main/assets/capacitor.config.json
+mobile/android/app/src/main/assets/capacitor.plugins.json
+mobile/android/app/src/main/res/xml/config.xml
+mobile/ios/App/App/public/
+mobile/ios/App/App/capacitor.config.json
+mobile/ios/App/App/config.xml
+mobile/ios/App/Pods/
+mobile/ios/App/DerivedData/
+mobile/ios/App/App.xcodeproj/xcuserdata/
+
+# ---------------------------------------------------------------- 签名文件：绝对不要提交
+# ⚠️ keystore.properties 里是**明文密码**，diary-release.keystore 是发布证书。
+#    这两个文件泄漏 = 别人能签出「看起来是你发的」更新包。
+#    注意 git 历史删不干净：一旦提交过就必须吊销并重建密钥，而不是删文件了事。
+*.keystore
+*.jks
+*.p12
+*.pem
+keystore.properties
+mobile/android/keystore.properties
+
+# ---------------------------------------------------------------- 打包产物（走 Releases，不进仓库）
+*.apk
+*.aab
+*.ipa
+
+# ---------------------------------------------------------------- 编辑器 / 系统
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+*.iml
+.vscode/
+*.bak
+
+# ---------------------------------------------------------------- 日志 / 临时
+*.log
+__pycache__/
+.venv/

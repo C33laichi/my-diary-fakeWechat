@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 品牌色：与 App 内部 CSS 变量 ink / green 保持一致 -->
+    <color name="brand_ink">#2E4A63</color>
+    <color name="brand_green">#07C160</color>
+    <color name="splash_background">#2E4A63</color>
+</resources>

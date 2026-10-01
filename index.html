@@ -1,0 +1,4661 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#EDEDED">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>我的日记</title>
+<style>
+/* ============================================================
+   设计令牌：默认浅色（仿微信朋友圈），data-theme="dark" 切换深色
+   ============================================================ */
+:root{
+  --bg:#EDEDED;
+  --shell:#D8D8D8;
+  --card:#FFFFFF;
+  --nav:#EDEDED;
+  --ink:#2E4A63;
+  --ink-tint:rgba(46,74,99,.09);
+  --text:#191919;
+  --text-strong:#000000;
+  --link:#576B95;
+  --sub:#B2B2B2;
+  --line:#E5E5E5;
+  --green:#07C160;
+  --green-press:#06AD56;
+  --danger:#FA5151;
+  --mask:rgba(0,0,0,.45);
+  --fill:#F2F2F2;
+  --safe-b:env(safe-area-inset-bottom,0px);
+  --safe-t:env(safe-area-inset-top,0px);
+}
+[data-theme="dark"]{
+  --bg:#0F0F0F;
+  --shell:#000000;
+  --card:#1C1C1E;
+  --nav:#0F0F0F;
+  --ink:#9FB6CB;
+  --ink-tint:rgba(159,182,203,.13);
+  --text:#EDEDED;
+  --text-strong:#FFFFFF;
+  --link:#7D90B8;
+  --sub:#7A7A7E;
+  --line:#2A2A2C;
+  --mask:rgba(0,0,0,.65);
+  --fill:#2A2A2C;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;height:100%;overflow:hidden}
+body{
+  background:#C9C9C9;
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  color:var(--text);
+  -webkit-font-smoothing:antialiased;
+}
+button{font-family:inherit;border:0;background:none;padding:0;color:inherit;cursor:pointer}
+img{display:block}
+input,textarea{font-family:inherit}
+
+/* 容器：窄屏铺满，大屏一列，超宽屏改左侧栏布局（见文件末尾响应式段） */
+#app{
+  position:relative;margin:0 auto;background:var(--bg);
+  width:100%;height:100dvh;overflow:hidden;
+}
+@media (min-width:520px){
+  body{background:var(--shell)}
+  #app{max-width:600px;box-shadow:0 0 0 1px var(--line)}
+}
+
+/* ---------------- 通用：页面容器 ---------------- */
+.screen{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg)}
+.screen.page{z-index:5;transform:translateX(100%);transition:transform .28s cubic-bezier(.4,0,.2,1);visibility:hidden}
+.screen.page.active{transform:translateX(0);visibility:visible}
+/* 标签面板：同层级切换，不做滑入动画（区别于 page） */
+.screen.pane{z-index:1;display:none}
+.screen.pane.active{display:flex}
+
+/* ---------------- 导航栏 ---------------- */
+.nav{
+  flex:none;position:relative;height:46px;display:flex;align-items:center;
+  padding:0 6px;padding-top:var(--safe-t);background:var(--nav);
+  border-bottom:.5px solid var(--line);z-index:3;
+}
+/* 左上返回键：图标贴左缘（约 16px 处），但保留 44×44 的触控热区 */
+.nav-btn.nav-back{justify-content:flex-start;padding-left:10px}
+.nav-btn.nav-back svg{flex:none}
+.nav-title{
+  position:absolute;left:50%;top:var(--safe-t);transform:translateX(-50%);
+  height:46px;line-height:46px;font-size:17px;font-weight:600;color:var(--text-strong);
+  white-space:nowrap;pointer-events:none;
+}
+.nav-btn{
+  height:44px;min-width:44px;padding:0 10px;display:flex;align-items:center;justify-content:center;
+  font-size:16px;color:var(--text);gap:4px;border-radius:6px;
+}
+.nav-btn:active{opacity:.5}
+.nav-btn.right{margin-left:auto}
+.nav-btn.link-green{color:var(--green);font-weight:500}
+.nav-btn[disabled]{color:var(--sub);pointer-events:none}
+/* 长按相机时的按压反馈（.post.pressing 那套是给卡片的，这里给导航按钮补一个） */
+.nav-btn.pressing{opacity:.45}
+/* 相机按钮要接住 pointer 长按手势：不给 touch-action，iOS 的 WebKit 会在手指稍微一动时
+   把这次手势判给滚动、发个 pointercancel 过来，长按就断了（安卓上一般不会，但写了也无害）。 */
+#btnCamera{touch-action:none}
+.nav-btn svg{display:block}
+/* hidden 属性要压得住 .nav-btn 的 display:flex，否则「返回首页」藏不起来 */
+.nav-btn[hidden]{display:none}
+
+/* ---------------- 滚动区 ---------------- */
+.scroll{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+
+/**
+ * 时间线的滚动区：**必须关掉浏览器自带的 overscroll**（contain）。
+ * 原因：现在下拉放大封面这件事完全由 JS 手势接管（见 bindPullToTop）。
+ * 如果同时放开原生回弹，安卓 12+ 的拉伸 / iOS 的橡皮筋会再动一遍整页，
+ * 两个位移叠在一起会「飘」，手感完全不是微信那种。
+ * —— 之前误判过一次：以为 contain 是"下拉没反应"的原因，
+ *    其实当时压根没有自定义下拉逻辑，光靠原生回弹自然什么都没有。
+ */
+#homeScroll{overscroll-behavior-y:contain}
+
+/* ---------------- 首页：朋友圈式封面 ---------------- */
+/* transform-origin 定在「顶部居中」：下拉放大时上边缘钉住不动，只向下、向两侧长，
+   配合下面 JS 的 translateY(-d) 就能严丝合缝填满下拉时露出的那块空白。
+   左右超出部分由 .scroll 的 overflow-x:hidden 裁掉，看起来就是朋友圈那种"图片被放大"。 */
+.cover{position:relative;height:250px;background:linear-gradient(150deg,#3C4A5E 0%,#5A6B82 45%,#8797A8 100%);overflow:hidden;cursor:pointer;transform-origin:center top;backface-visibility:hidden}
+.cover img{width:100%;height:100%;object-fit:cover}
+/* 这层只是压暗，必须让点击穿过去 —— 否则它铺满整块，把封面的点击全吃掉了，
+   下面的「点封面看大图」永远触发不了。 */
+.cover::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.18),rgba(0,0,0,.32));pointer-events:none}
+.cover-add{
+  position:absolute;right:12px;top:12px;z-index:2;color:#fff;font-size:12px;
+  background:rgba(0,0,0,.28);padding:4px 9px;border-radius:14px;
+  /* iOS 的 WKWebView 只认带前缀的写法，少写一行 iPhone 上毛玻璃就没了（安卓/Chrome 两种都认） */
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+}
+.cover-add:active{opacity:.6}
+.cover-shade{position:absolute;left:0;right:0;bottom:0;height:78px;
+  background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.45));z-index:1}
+.me{
+  position:relative;margin-top:-44px;padding:0 14px 14px;background:var(--card);
+  display:flex;align-items:flex-start;gap:12px;z-index:2;
+}
+.me-avatar{
+  width:66px;height:66px;border-radius:8px;flex:none;margin-top:-22px;
+  border:3px solid var(--card);background:#8E8E93;overflow:hidden;
+  box-shadow:0 2px 10px rgba(0,0,0,.15);
+}
+.me-avatar img{width:100%;height:100%;object-fit:cover}
+.me-info{flex:1;min-width:0;padding-top:4px}
+.me-name{font-size:17px;font-weight:600;color:var(--text-strong);line-height:1.3}
+.me-sign{font-size:13px;color:var(--sub);margin-top:4px;line-height:1.4;word-break:break-all}
+.me-stat{font-size:12px;color:var(--sub);margin-top:7px}
+
+/* ---------------- 日记卡片（朋友圈动态块） ---------------- */
+.timeline{background:var(--card);min-height:200px}
+.year-divider{
+  padding:8px 14px;font-size:13px;color:var(--sub);background:var(--card);
+  border-top:.5px solid var(--line);position:sticky;top:0;z-index:2;
+}
+[data-theme="dark"] .year-divider{background:#1C1C1E}
+.post{
+  display:flex;gap:10px;padding:14px;background:var(--card);
+  border-bottom:.5px solid var(--line);position:relative;
+}
+.post.pressing{background:var(--fill)}
+.post-avatar{
+  width:42px;height:42px;border-radius:6px;flex:none;overflow:hidden;background:#8E8E93;
+}
+.post-avatar img{width:100%;height:100%;object-fit:cover}
+.post-avatar .avatar-letter{
+  width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+  color:#fff;font-size:18px;font-weight:600;background:linear-gradient(135deg,#4A7A9B,#3B5A73);
+}
+.post-main{flex:1;min-width:0}
+.post-name{font-size:16px;font-weight:500;color:var(--link);line-height:1.2;margin-bottom:5px}
+/* 换行由 TextFmt.toHtml() 显式转成的 <br> 负责，这里绝不能再开 pre-wrap ——
+   否则源码里的换行符 + <br> 会各渲染一次，行距被翻倍，正文看起来"多空了一行"。
+   用 normal 让文本流自己合并空白，只有 <br> 决定换行，各端表现一致。 */
+.post-text{
+  font-size:16px;line-height:1.5;color:var(--text);white-space:normal;
+  word-break:break-word;letter-spacing:.2px;
+}
+/* 折叠态：CSS 限制行数，iOS/Android WebView 与新版 Chrome 都支持 -webkit-line-clamp。
+   行数走变量，由 JS 用 POST_FOLD_LINES 写进 :root —— 免得两边各写一个 6，改一处漏一处。 */
+.post-text.folded{
+  display:-webkit-box;-webkit-line-clamp:var(--post-fold-lines,6);-webkit-box-orient:vertical;
+  overflow:hidden;position:relative;
+}
+/* 末尾一层渐隐，暗示"下面还有内容"，比硬切自然 */
+.post-text.folded::after{
+  content:"";position:absolute;right:0;bottom:0;width:56px;height:1.5em;
+  background:linear-gradient(90deg,rgba(0,0,0,0),var(--card) 62%);
+  pointer-events:none;
+}
+.post-text.expanded{display:block;overflow:visible}
+/* 微信式「更多 / 收起」：整行左侧、绿色链接色，不用按钮样式 */
+.post-moretext{
+  display:block;text-align:left;margin-top:4px;font-size:15px;
+  color:var(--link);line-height:1.7;padding:0;
+}
+.post-moretext span{font-size:12.5px;color:var(--sub);margin-left:2px}
+.post-moretext:active{opacity:.55}
+.post-moretext.on{color:var(--sub)}
+.post-foot{
+  display:flex;align-items:center;gap:8px;margin-top:8px;min-height:22px;
+}
+.post-time{font-size:12.5px;color:var(--sub)}
+.post-lock{display:flex;align-items:center;color:var(--sub);opacity:.85}
+.post-more{
+  margin-left:auto;width:34px;height:24px;display:flex;align-items:center;justify-content:center;
+  border-radius:4px;background:var(--fill);color:var(--sub);gap:2px;
+}
+.post-more:active{opacity:.55}
+.post-more .dot{width:3px;height:3px;border-radius:50%;background:currentColor}
+
+/* 九宫格图片 */
+.pgrid{display:grid;gap:4px;margin-top:8px}
+.pgrid.n1{grid-template-columns:1fr;max-width:210px}
+.pgrid.n2{grid-template-columns:repeat(2,1fr);max-width:176px}
+.pgrid.n4{grid-template-columns:repeat(2,1fr);max-width:176px}
+.pgrid.n3,.pgrid.n5,.pgrid.n6,.pgrid.n7,.pgrid.n8,.pgrid.n9{grid-template-columns:repeat(3,1fr);max-width:232px}
+.pgrid .ph{
+  width:100%;aspect-ratio:1;border-radius:3px;overflow:hidden;background:var(--fill);
+  position:relative;display:block;animation:fadeIn .25s ease both;
+}
+.pgrid.n1 .ph{aspect-ratio:1}
+.pgrid .ph img{width:100%;height:100%;object-fit:cover;display:block}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+
+/* 空状态 */
+.empty{padding:70px 30px;text-align:center;background:var(--card)}
+.empty svg{margin:0 auto 18px;display:block;opacity:.9}
+.empty h3{font-size:16px;font-weight:500;color:var(--text);margin:0 0 8px}
+.empty p{font-size:13.5px;color:var(--sub);line-height:1.7;margin:0}
+.empty-hint{
+  margin:0 14px 14px;padding:14px 16px;border-radius:10px;background:var(--card);
+  font-size:12.5px;color:var(--sub);line-height:1.7;
+}
+.empty-hint b{color:var(--text);font-weight:500}
+
+/* 时间线底部提示 */
+.tl-end{padding:22px 14px calc(30px + var(--safe-b));text-align:center;font-size:12.5px;color:var(--sub);background:var(--card)}
+
+/* 下拉回弹（微信手势）：跟手期间由 JS 写 transform（下面 data-pulling 只是提性能），
+   松手后靠这段过渡把「整体位移」和「封面放大」一起弹回原位。
+   缓动特意带一点过冲（cubic-bezier 的 y 超过 1），松手那一下才有 QQ 弹弹的手感。 */
+/* 时间线内容层：下拉手势位移的就是它（不是滚动区），常态不需要任何样式，
+   只在跟手时挂 will-change 提一下性能，省得整页都常驻一个合成层。 */
+.tl-pull{position:relative}
+.tl-pull[data-pulling]{will-change:transform}
+.tl-pull[data-pulling] .cover{will-change:transform}
+/* 松手后的收放过渡（和 JS 里 380ms 的清理定时器对齐）：
+   缓动的 y 分量超过 1，回弹时会有一点点过冲，手感更接近微信。 */
+.tl-pull.springing,.cover.springing{transition:transform .36s cubic-bezier(.22,1.35,.36,1)}
+/* 头像 / 背景可点：给一点按压反馈，让人知道它们能点 */
+.me-avatar,.cover{cursor:pointer}
+.me-avatar:active{opacity:.85}
+
+/* ---------------- 发布页 ---------------- */
+.composer-body{flex:1;overflow-y:auto;padding:14px 14px calc(24px + var(--safe-b));background:var(--card)}
+#composerText{
+  width:100%;min-height:130px;max-height:46vh;border:0;outline:none;resize:none;
+  font-size:17px;line-height:1.55;color:var(--text);background:transparent;padding:0;
+}
+#composerText::placeholder{color:var(--sub)}
+.cgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px}
+.cgrid .cell{
+  position:relative;aspect-ratio:1;border-radius:5px;overflow:hidden;background:var(--fill);
+  display:flex;align-items:center;justify-content:center;
+}
+.cgrid .cell img{width:100%;height:100%;object-fit:cover}
+.cgrid .cell .del{
+  position:absolute;top:0;right:0;width:24px;height:24px;background:rgba(0,0,0,.55);
+  border-bottom-left-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;
+}
+.cgrid .cell .del:active{opacity:.6}
+.cgrid .add{
+  border:1px dashed var(--line);color:var(--sub);flex-direction:column;gap:6px;
+  font-size:12px;background:transparent;
+}
+.cgrid .add:active{background:var(--fill)}
+.counter{text-align:right;font-size:12px;color:var(--sub);margin-top:10px}
+.counter.warn{color:var(--danger)}
+.composer-tip{font-size:12.5px;color:var(--sub);line-height:1.7;margin-top:20px;padding-top:14px;border-top:.5px solid var(--line)}
+
+/* ---------------- 通用：底部操作面板 ---------------- */
+.mask{
+  position:fixed;inset:0;background:var(--mask);z-index:120;opacity:0;pointer-events:none;
+  transition:opacity .22s ease;
+}
+.mask.show{opacity:1;pointer-events:auto}
+.sheet{
+  position:absolute;left:8px;right:8px;bottom:calc(8px + var(--safe-b));
+  background:var(--card);border-radius:12px;overflow:hidden;
+  transform:translateY(120%);transition:transform .26s cubic-bezier(.32,.72,0,1);
+}
+.mask.show .sheet{transform:translateY(0)}
+.sheet-item{
+  height:52px;display:flex;align-items:center;justify-content:center;gap:8px;
+  font-size:16.5px;color:var(--text);border-bottom:.5px solid var(--line);width:100%;
+}
+.sheet-item:last-child{border-bottom:0}
+.sheet-item:active{background:var(--fill)}
+.sheet-item.danger{color:var(--danger)}
+.sheet-item.cancel{margin-top:8px;border-radius:12px;background:var(--card);font-weight:500}
+
+/* 对话框 */
+.dialog{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) scale(.92);
+  width:272px;background:var(--card);border-radius:12px;overflow:hidden;text-align:center;
+  transition:transform .2s ease;
+}
+.mask.show .dialog{transform:translate(-50%,-50%) scale(1)}
+.dialog-title{font-size:17px;font-weight:500;color:var(--text-strong);padding:22px 20px 0}
+/* 同 .post-text：换行只交给内容里的 <br>，这里不开 pre-wrap，避免换行被算两次 */
+.dialog-text{font-size:14px;color:var(--sub);line-height:1.6;padding:9px 20px 20px;
+  white-space:normal;word-break:break-word;max-height:46vh;overflow-y:auto}
+.dialog-btns{display:flex;border-top:.5px solid var(--line)}
+.dialog-btns button{
+  flex:1;height:50px;font-size:16.5px;color:var(--text);
+}
+.dialog-btns button+button{border-left:.5px solid var(--line)}
+.dialog-btns button:active{background:var(--fill)}
+.dialog-btns .danger{color:var(--danger)}
+.dialog-btns .primary{color:var(--green);font-weight:500}
+
+/* ---------------- 图片查看器 ---------------- */
+.viewer{
+  position:fixed;inset:0;background:#000;z-index:80;display:none;flex-direction:column;
+  /* 横向裁剪放在这一层：轨道里的其它页会被推出视口，需要裁掉。
+     注意**不能**把这个 overflow 放到 .viewer-track 上（见下方轨道的注释）。 */
+  overflow:hidden;
+}
+.viewer.show{display:flex}
+.viewer-top{
+  flex:none;height:calc(48px + var(--safe-t));padding-top:var(--safe-t);
+  display:flex;align-items:center;padding-left:6px;padding-right:14px;color:#fff;z-index:2;
+}
+.viewer-count{font-size:14px;opacity:.9;margin:0 auto}
+/* ⚠️ 轨道上**绝对不能**加 overflow:hidden —— 这是踩过的坑：
+   实测（translateX 逐档测试）只要轨道带 overflow:hidden，位移到约 -50% 之后，
+   整棵子树就**同时失去命中测试和绘制**：滑到第 2 张后再也收不到 touchstart
+   （表现为"只能翻一次、之后卡住"），截图也因为落在两张图之间的空隙而是纯黑。
+   横向裁剪交给外层 .viewer（它已有 overflow:hidden），轨道保持默认 visible。 */
+.viewer-track{flex:1;display:flex;align-items:center;transition:transform .26s cubic-bezier(.3,.7,0,1);touch-action:none}
+.viewer-track .slide{flex:0 0 100%;height:100%;display:flex;align-items:center;justify-content:center;padding:0 6px}
+.viewer-track .slide img{
+  max-width:100%;max-height:100%;object-fit:contain;border-radius:2px;
+  /* ⚠️ max-height 百分比不能单独用：查看器里 .viewer-track 是 flex:1 的轨道，
+     实测（844x390 横屏）会出现轨道高度=图片内容高度(624px) > 视口(390px) 的情况，
+     此时 img 的 100% 参照的是那个撑大的父盒，图片就溢出屏幕了。
+     所以高度再用视口单位钉一次 —— 查看器是全屏的，100vh 减掉顶栏就是确定值。 */
+  max-height:calc(100vh - var(--viewer-top, 48px) - var(--safe-t) - var(--safe-b) - 4px);
+  /* 缩放由 JS 写 transform（translate 居中 + scale）；will-change 让合成层提前就位，
+     否则 iOS 上双指缩放的每一帧都要重新栅格化，肉眼可见地掉帧。 */
+  transform-origin:center center;will-change:transform;
+}
+/* 放大后单指拖动应该是「看图片的其余部分」，而不是左右翻页；
+   这里只负责光标反馈，是否翻页由 JS 依据当前缩放值决定。 */
+.viewer-track .slide img.zoomed{cursor:grab}
+.viewer-track .slide img.zoomed:active{cursor:grabbing}
+
+/* ---------------- 锁屏 ---------------- */
+#screen-lock{
+  z-index:100;background:#161A1F;
+  background-image:radial-gradient(circle at 20% 12%,rgba(80,120,160,.35),transparent 55%),
+                   radial-gradient(circle at 82% 82%,rgba(60,90,120,.32),transparent 55%);
+  color:#fff;align-items:center;justify-content:center;display:none;
+}
+#screen-lock.show{display:flex}
+.lock-inner{width:100%;max-width:300px;padding:0 24px;display:flex;flex-direction:column;align-items:center}
+.lock-icon{
+  width:56px;height:56px;border-radius:16px;background:rgba(255,255,255,.1);
+  display:flex;align-items:center;justify-content:center;margin-bottom:16px;
+}
+.lock-title{font-size:17px;font-weight:500;letter-spacing:.5px}
+.lock-sub{font-size:13px;color:rgba(255,255,255,.6);margin-top:8px;text-align:center;line-height:1.6;min-height:20px}
+.lock-dots{display:flex;gap:16px;margin:26px 0 6px;height:14px}
+.lock-dots i{
+  width:13px;height:13px;border-radius:50%;border:1.5px solid rgba(255,255,255,.55);
+  transition:background .15s,transform .15s;
+}
+.lock-dots i.on{background:#fff;border-color:#fff;transform:scale(1.05)}
+.lock-dots.shake{animation:shake .38s}
+@keyframes shake{
+  0%,100%{transform:translateX(0)}
+  20%{transform:translateX(-9px)}
+  40%{transform:translateX(8px)}
+  60%{transform:translateX(-5px)}
+  80%{transform:translateX(3px)}
+}
+.keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:0;width:100%;margin-top:14px}
+.keypad button{
+  height:62px;font-size:25px;font-weight:300;color:#fff;display:flex;
+  align-items:center;justify-content:center;border-radius:50%;margin:0 auto;width:64px;
+  transition:background .12s;
+}
+.keypad button:active{background:rgba(255,255,255,.18)}
+.keypad .blank{pointer-events:none}
+.keypad .fn{font-size:15px;font-weight:400;color:rgba(255,255,255,.75);width:auto;padding:0 12px}
+.lock-foot{margin-top:26px;display:flex;gap:26px}
+.lock-foot button{font-size:13.5px;color:rgba(255,255,255,.62);padding:8px}
+.lock-foot button:active{opacity:.6}
+
+/* ---------------- 设置页 ---------------- */
+.set-group{margin-top:10px;background:var(--card)}
+.set-group-title{font-size:13px;color:var(--sub);padding:14px 16px 8px}
+.set-row{
+  display:flex;align-items:center;gap:12px;min-height:54px;padding:9px 16px;
+  border-bottom:.5px solid var(--line);width:100%;text-align:left;
+}
+/* .set-row 自带 display:flex 会把 hidden 属性的 UA 样式（display:none）压掉 ——
+   和 .nav-btn 踩过的是同一个坑。「关闭密码」行靠 hidden 收放，没这条它会
+   在密码删掉之后还挂在页面上（截图里亲眼见过的 bug）。 */
+.set-row[hidden]{display:none}
+.set-group .set-row:last-child{border-bottom:0}
+.set-row:active{background:var(--fill)}
+.set-label{font-size:16px;color:var(--text);flex:none}
+.set-value{
+  margin-left:auto;font-size:15px;color:var(--sub);max-width:56%;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.set-row.danger .set-label{color:var(--danger)}
+.set-arrow{flex:none;color:var(--sub);opacity:.7}
+.set-input{
+  margin-left:auto;border:0;outline:none;background:transparent;text-align:right;
+  font-size:15px;color:var(--text);width:60%;border-bottom:1px solid transparent;
+}
+.set-input:focus{border-bottom-color:var(--green)}
+.switch{
+  margin-left:auto;width:51px;height:31px;border-radius:16px;background:#DDD;
+  position:relative;transition:background .2s;flex:none;
+}
+[data-theme="dark"] .switch{background:#3A3A3C}
+.switch i{
+  position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;
+  box-shadow:0 1px 3px rgba(0,0,0,.2);transition:transform .2s;
+}
+.switch.on{background:var(--green)}
+.switch.on i{transform:translateX(20px)}
+.set-note{font-size:12.5px;color:var(--sub);line-height:1.7;padding:12px 16px;background:var(--card)}
+.storage-bar{height:5px;border-radius:3px;background:var(--fill);overflow:hidden;margin:8px 16px 0;display:none}
+.storage-bar i{display:block;height:100%;background:var(--green);width:0;transition:width .3s}
+
+/* ============================================================
+   封面页：品牌入口（标题 / 进入按钮 / 简洁背景）
+   ============================================================ */
+#screen-cover{
+  z-index:140;position:absolute;inset:0;display:none;overflow:hidden;
+  align-items:center;justify-content:center;
+  background:#141C24;color:#F2F5F8;
+  transition:opacity .55s ease,transform .55s ease;
+}
+#screen-cover.show{display:flex}
+#screen-cover.leaving{opacity:0;transform:scale(1.05);pointer-events:none}
+/* 背景一层：极淡的斜向方格，呼应「纸／本」的秩序感 */
+#screen-cover::before{
+  content:"";position:absolute;inset:-25%;
+  background-image:linear-gradient(rgba(255,255,255,.042) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(255,255,255,.042) 1px,transparent 1px);
+  background-size:36px 36px;transform:rotate(-7deg);
+}
+/* 背景二层：两处柔和光晕，上半冷蓝、底部品牌绿 */
+#screen-cover::after{
+  content:"";position:absolute;inset:0;
+  background:radial-gradient(ellipse 72% 52% at 50% 26%,rgba(120,160,200,.22),transparent 72%),
+             radial-gradient(ellipse 66% 46% at 50% 104%,rgba(7,193,96,.13),transparent 72%);
+}
+.cover-inner{
+  position:relative;z-index:2;width:100%;max-width:380px;padding:0 34px;
+  display:flex;flex-direction:column;align-items:center;text-align:center;
+}
+.cover-mark{
+  width:58px;height:58px;border-radius:19px;margin-bottom:28px;
+  background:rgba(255,255,255,.09);border:.5px solid rgba(255,255,255,.2);
+  display:flex;align-items:center;justify-content:center;
+}
+.cover-title{
+  margin:0;font-size:33px;font-weight:600;line-height:1.25;
+  letter-spacing:9px;text-indent:9px;
+}
+.cover-sub{margin:14px 0 0;font-size:13.5px;letter-spacing:2.5px;color:rgba(242,245,248,.6)}
+.cover-rule{width:46px;height:1px;background:rgba(255,255,255,.26);margin:28px 0}
+.cover-meta{margin:0;font-size:13px;line-height:1.9;color:rgba(242,245,248,.55)}
+.cover-meta b{color:#fff;font-weight:500}
+/* 自动进入的进度条：一条 1.8 秒走完的细线，让"停一下就进去"这件事看起来是刻意的 */
+.cover-auto{
+  margin-top:34px;width:132px;height:2px;border-radius:2px;overflow:hidden;
+  background:rgba(255,255,255,.16);
+}
+.cover-auto-bar{
+  display:block;height:100%;width:0;border-radius:2px;background:#fff;opacity:.75;
+}
+.cover-auto-bar.run{animation:coverAuto 1.8s linear forwards}
+@keyframes coverAuto{from{width:0}to{width:100%}}
+.cover-enter-hint{
+  margin:13px 0 0;font-size:12px;letter-spacing:1.2px;color:rgba(242,245,248,.4);
+  animation:coverHint 1.8s ease-in-out infinite;
+}
+@keyframes coverHint{0%,100%{opacity:.45}50%{opacity:.85}}
+/* 整页可点：想快点进去就点一下，不需要精确命中某个按钮 */
+#screen-cover{cursor:default}
+#screen-cover .cover-tap{position:absolute;inset:0;z-index:1}
+.cover-foot{
+  position:absolute;left:0;right:0;bottom:calc(26px + var(--safe-b));z-index:2;
+  text-align:center;font-size:12px;letter-spacing:.6px;color:rgba(242,245,248,.34);
+}
+/* 想回到"必须手动点击"的老行为：把「启动时显示封面页」关掉即可，
+   或在这里把动画时长改长、把 enterApp 的定时器去掉 */
+@media (prefers-reduced-motion:reduce){
+  .cover-auto-bar.run{animation-duration:1.8s}
+  .cover-enter-hint{animation:none}
+}
+@media (min-width:900px){
+  .cover-title{font-size:40px}
+  .cover-inner{max-width:460px}
+}
+
+/* ============================================================
+   主导航：窄屏底部标签栏 / ≥900px 左侧导航栏
+   ============================================================ */
+.tabbar{
+  position:absolute;left:0;right:0;bottom:0;z-index:4;
+  display:flex;align-items:stretch;
+  background:var(--nav);border-top:.5px solid var(--line);
+  padding-bottom:var(--safe-b);
+}
+.tabbar .tab{
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  padding:8px 0 6px;color:var(--sub);font-size:11px;line-height:1;
+  transition:color .15s;
+}
+.tabbar .tab svg{display:block}
+.tabbar .tab.on{color:var(--green)}
+.tabbar .tab:active{opacity:.55}
+.tabbar .brand{display:none}
+
+/* 悬浮「写日记」按钮（层级低于 .screen.page，打开发布页时自动让位） */
+.fab{
+  position:absolute;right:16px;bottom:calc(68px + var(--safe-b));z-index:3;
+  width:56px;height:56px;border-radius:50%;background:var(--green);color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 6px 20px rgba(7,193,96,.4);
+  transition:transform .16s,background .16s;
+}
+.fab:active{transform:scale(.93);background:var(--green-press)}
+
+/* 标签面板统一留出导航占位 */
+.screen.pane{padding-bottom:calc(50px + var(--safe-b))}
+.screen.pane .scroll{overscroll-behavior:contain}
+/* 启动决策完成前不显示任何面板，避免封面页出现前闪一下主界面 */
+#app.booting .screen.pane{display:none}
+
+/* ============================================================
+   首页
+   ============================================================ */
+.desk-inner{padding:20px 16px 96px;max-width:1040px;margin:0 auto;width:100%}
+.desk-hello{margin:6px 4px 22px}
+.desk-date{font-size:13px;color:var(--sub);letter-spacing:.4px}
+.desk-greet{font-size:23px;font-weight:600;color:var(--text-strong);margin:9px 0 0;letter-spacing:.3px}
+.desk-sub{font-size:13px;color:var(--sub);margin:10px 0 0;line-height:1.6}
+.desk-primary{
+  width:100%;display:flex;align-items:center;gap:14px;text-align:left;
+  padding:18px 18px;border-radius:16px;background:var(--green);color:#fff;
+  box-shadow:0 6px 18px rgba(7,193,96,.26);
+  transition:transform .16s,box-shadow .16s;
+}
+.desk-primary:active{transform:scale(.985);box-shadow:0 3px 10px rgba(7,193,96,.2)}
+.desk-primary .dp-ico{
+  width:44px;height:44px;border-radius:13px;flex:none;
+  background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;
+}
+.desk-primary .dp-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
+.desk-primary .dp-text b{font-size:16.5px;font-weight:500;letter-spacing:.3px}
+.desk-primary .dp-text i{font-size:12.5px;font-style:normal;opacity:.82}
+.desk-primary .dp-arrow{flex:none;opacity:.75}
+
+.tiles{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px;
+}
+.tile{
+  position:relative;display:flex;flex-direction:column;align-items:center;gap:9px;
+  padding:16px 6px 13px;border-radius:16px;background:var(--card);
+  transition:transform .16s,background .16s;
+}
+.tile:active{transform:scale(.97);background:var(--fill)}
+/* 图标样式规范：46px 圆角底 + 22px 线性图标（1.7 描边、圆头圆角），全局统一墨蓝主色 */
+.tile-ico{
+  width:46px;height:46px;border-radius:14px;background:var(--ink-tint);color:var(--ink);
+  display:flex;align-items:center;justify-content:center;
+}
+.tile-label{font-size:12.5px;color:var(--text);letter-spacing:.2px}
+.tile-badge{
+  position:absolute;top:11px;right:11px;min-width:19px;height:19px;padding:0 5px;
+  border-radius:10px;background:var(--green);color:#fff;font-size:11px;line-height:19px;
+  text-align:center;
+}
+.tile-badge:empty,.tile-badge[data-zero="1"]{display:none}
+
+.desk-recent{margin-top:18px;border-radius:16px;background:var(--card);overflow:hidden}
+.dr-head{
+  display:flex;align-items:center;padding:15px 18px 12px;
+  font-size:13px;color:var(--sub);letter-spacing:.3px;
+}
+.dr-head button{margin-left:auto;font-size:13px;color:var(--green)}
+.dr-body{display:flex;gap:13px;padding:0 18px 18px}
+.dr-thumb{
+  width:58px;height:58px;border-radius:11px;flex:none;background:var(--fill);overflow:hidden;
+}
+.dr-thumb img{width:100%;height:100%;object-fit:cover}
+.dr-text{flex:1;min-width:0}
+.dr-excerpt{
+  font-size:14.5px;line-height:1.55;color:var(--text);margin:2px 0 8px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+.dr-meta{font-size:12px;color:var(--sub)}
+.dr-empty{padding:0 18px 20px;font-size:13.5px;color:var(--sub);line-height:1.7}
+
+/* ============================================================
+   相册
+   ============================================================ */
+.gal-inner{padding:16px 14px 96px;max-width:1040px;margin:0 auto;width:100%}
+.pane-head{display:flex;align-items:baseline;gap:10px;padding:6px 4px 16px}
+.pane-head h2{font-size:20px;font-weight:600;color:var(--text-strong);margin:0}
+.pane-head span{font-size:13px;color:var(--sub);margin-left:auto}
+.gal-month{margin-bottom:20px}
+.gal-month-title{font-size:13px;color:var(--sub);margin:0 4px 9px;letter-spacing:.4px}
+.gal-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.gal-grid a{aspect-ratio:1;border-radius:4px;overflow:hidden;background:var(--fill);display:block}
+.gal-grid img{width:100%;height:100%;object-fit:cover;display:block}
+
+/* ============================================================
+   搜索
+   ============================================================ */
+.search-bar{
+  flex:1;display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;
+  border-radius:17px;background:var(--fill);color:var(--sub);
+}
+.search-bar input{
+  flex:1;border:0;outline:none;background:transparent;font-size:15px;color:var(--text);min-width:0;
+}
+.search-bar input::placeholder{color:var(--sub)}
+.search-hit{padding:15px 16px;background:var(--card);border-bottom:.5px solid var(--line)}
+.search-hit:active{background:var(--fill)}
+.search-hit mark{background:rgba(7,193,96,.22);color:inherit;border-radius:3px;padding:0 1px}
+.search-hit .sh-text{font-size:15px;line-height:1.55;color:var(--text)}
+.search-hit .sh-meta{font-size:12px;color:var(--sub);margin-top:7px}
+.search-tip{padding:64px 30px;text-align:center;font-size:13.5px;color:var(--sub);line-height:1.8}
+
+/* ============================================================
+   统计
+   ============================================================ */
+.stat-inner{padding:18px 16px 30px;max-width:1040px;margin:0 auto;width:100%}
+.stat-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.stat-card{padding:18px 14px;border-radius:16px;background:var(--card);text-align:center}
+.stat-num{font-size:26px;font-weight:600;color:var(--text-strong);line-height:1.15}
+.stat-num small{font-size:13px;font-weight:400;color:var(--sub);margin-left:2px}
+.stat-cap{font-size:12.5px;color:var(--sub);margin-top:8px}
+.chart-card{margin-top:14px;padding:18px 16px 14px;border-radius:16px;background:var(--card)}
+.chart-title{font-size:13.5px;color:var(--text);margin:0 0 16px;display:flex}
+.chart-title span{margin-left:auto;color:var(--sub);font-size:12.5px}
+.bars{display:flex;align-items:flex-end;gap:6px;height:132px}
+.bar-col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:7px;height:100%}
+.bar{
+  width:100%;max-width:26px;border-radius:5px 5px 3px 3px;background:var(--ink-tint);
+  min-height:3px;transition:height .4s cubic-bezier(.4,0,.2,1);
+}
+.bar.has{background:var(--green)}
+.bar-num{font-size:10.5px;color:var(--sub);height:13px;line-height:13px}
+.bar-cap{font-size:11px;color:var(--sub)}
+.stat-rows{margin-top:14px;border-radius:16px;background:var(--card);overflow:hidden}
+.stat-row{
+  display:flex;align-items:center;gap:12px;padding:14px 18px;
+  border-bottom:.5px solid var(--line);font-size:14.5px;
+}
+.stat-rows .stat-row:last-child{border-bottom:0}
+/* 左名目 + 右数值：名目固定色、数值加重，长名目不换行 */
+.stat-row .sr-label{color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stat-row .sr-value{
+  margin-left:auto;flex:none;font-weight:500;color:var(--text-strong);font-size:15px;
+  font-variant-numeric:tabular-nums;white-space:nowrap;
+}
+.stat-row .sr-value i{font-style:normal;font-size:12.5px;font-weight:400;color:var(--sub);margin-left:1px}
+.stat-note{margin-top:14px;font-size:12px;color:var(--sub);text-align:center;line-height:1.7}
+@media (min-width:900px){
+  .stat-rows{display:grid;grid-template-columns:repeat(2,1fr)}
+  /* 双列时右列首行也要有上边框，否则看着像少一条 */
+  .stat-rows .stat-row{border-bottom:.5px solid var(--line)}
+  .stat-rows .stat-row:nth-child(odd){border-right:.5px solid var(--line)}
+  .stat-rows .stat-row:nth-last-child(-n+2){border-bottom:0}
+}
+
+/* 跳转定位后的高亮 */
+@keyframes hlFade{0%{background:rgba(7,193,96,.14)}100%{background:transparent}}
+.post.hl{animation:hlFade 1.8s ease-out both}
+
+/* ============================================================
+   Toast
+   ============================================================ */
+#toast{
+  position:fixed;left:50%;bottom:88px;transform:translate(-50%,12px);
+  background:rgba(0,0,0,.82);color:#fff;font-size:13.5px;padding:10px 18px;border-radius:8px;
+  max-width:78%;text-align:center;line-height:1.5;z-index:200;opacity:0;pointer-events:none;
+  transition:opacity .2s,transform .2s;
+}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+
+/* ============================================================
+   响应式：≥900px 切换为「左侧导航栏 + 主内容区」的宽屏骨架
+   ============================================================ */
+@media (min-width:900px){
+  #app{max-width:none;box-shadow:none}
+  .tabbar{
+    top:0;bottom:0;left:0;right:auto;width:84px;flex-direction:column;
+    align-items:center;justify-content:flex-start;gap:6px;
+    border-top:0;border-right:.5px solid var(--line);
+    background:var(--card);padding:calc(16px + var(--safe-t)) 0 18px;
+  }
+  .tabbar .brand{
+    display:flex;width:40px;height:40px;border-radius:13px;margin-bottom:16px;
+    background:#1E2B38;color:#fff;align-items:center;justify-content:center;flex:none;
+  }
+  .tabbar .tab{
+    flex:none;width:64px;height:56px;border-radius:13px;gap:5px;font-size:11px;
+  }
+  .tabbar .tab.on{background:rgba(7,193,96,.1);color:var(--green)}
+  @media (hover:hover){.tabbar .tab:hover{background:var(--fill)}}
+  .fab{left:14px;right:auto;bottom:20px;width:56px;height:56px;position:absolute}
+
+  .screen.pane{padding-bottom:0;padding-left:84px}
+  .desk-inner,.gal-inner,.stat-inner{padding:30px 34px 40px}
+
+  /* 宽屏档：磁贴 6 列一行放完，与最近记录并排 */
+  .desk-body{display:grid;grid-template-columns:1fr 340px;gap:22px;align-items:start}
+  .tiles{grid-template-columns:repeat(3,1fr);gap:12px;margin-top:0}
+  .desk-primary{margin-bottom:14px}
+  .desk-recent{margin-top:14px}
+  .gal-grid{grid-template-columns:repeat(6,1fr);gap:7px}
+  .stat-cards{grid-template-columns:repeat(3,1fr)}
+  .bars{height:158px}
+
+  /* 时间线在宽屏档收成居中的阅读列 */
+  #screen-timeline .scroll > *{max-width:720px;margin-left:auto;margin-right:auto}
+  #screen-timeline .cover{height:300px;border-radius:14px;margin-top:28px;overflow:hidden}
+  #screen-timeline .me{border-radius:0}
+  #screen-timeline .timeline{border-radius:0 0 14px 14px;overflow:hidden}
+  #screen-timeline .empty{border-radius:0 0 14px 14px}
+  #screen-timeline .empty-hint{border-radius:14px}
+  .screen.page{padding-left:84px}
+  #screen-composer .composer-body{max-width:720px;margin:0 auto;width:100%}
+}
+
+/* 极窄屏（<340px）微调，避免磁贴文字挤压 */
+@media (max-width:339px){
+  .tiles{grid-template-columns:repeat(2,1fr)}
+  .stat-cards{grid-template-columns:1fr}
+  .cover-title{font-size:27px;letter-spacing:6px}
+}
+
+/* ============================================================
+   横屏（手机竖屏旋转为横屏）
+   ------------------------------------------------------------
+   横屏的问题不在宽度，而在**高度**：竖屏专用的一堆固定高度
+   （封面 250px、导航 46px、底部标签栏 50px+）在横屏里会把
+   只剩 ~390px 的高度吃掉大半，正文区被挤成一条缝。
+   所以这一段的核心只有一件事：把竖向占用的高度整体压下来。
+   用 max-height:520px 把平板/桌面排除在外 —— 它们横屏高度足够，
+   套上这套压缩规则反而会变得小气。
+   ============================================================ */
+@media (orientation:landscape) and (max-height:520px){
+  /* 铺满整宽：横屏的目的就是想要更多空间，而 520px 那条「平板」规则会把 #app
+     卡在 600px 居中，在 844 宽的手机屏左右各留 122px 灰边，很浪费。
+     不会把正文拉得过宽 —— >520px 时时间线本来就会收成居中的阅读列。 */
+  body{background:var(--bg)}
+  #app{max-width:none;box-shadow:none}
+
+  /* 封面：改成按视口高度取，任何横屏比例下都留得住正文 */
+  .cover{height:46vh;min-height:120px;max-height:230px}
+  .cover-title{font-size:26px;letter-spacing:5px}
+  .cover-sub{font-size:12.5px;margin-top:10px}
+  .cover-rule{margin-top:14px}
+  .cover-mark{width:46px;height:46px;border-radius:14px}
+
+  /* 导航栏压到 38px；标题行高必须跟着改，否则文字会溢出到栏外 */
+  .nav{height:38px}
+  .nav-title{height:38px;line-height:38px;font-size:16px}
+  .nav-btn{height:38px;min-width:40px}
+
+  /* 底部标签栏：横屏高度太宝贵，图标下不再写文字（被选中项仍靠颜色区分） */
+  .tabbar .tab{padding:5px 0 4px;gap:0}
+  .tabbar .tab span{display:none}
+  .screen.pane{padding-bottom:calc(42px + var(--safe-b))}
+
+  /* 悬浮按钮收小并贴近右下，避免盖住正文 */
+  .fab{width:48px;height:48px;right:12px;bottom:calc(56px + var(--safe-b))}
+
+  /* 正文密度：横屏一行能排下更多字，内边距可以小一点 */
+  .desk-inner{padding:14px 18px 72px}
+  .desk-greet{font-size:20px;margin-top:6px}
+  .desk-hello{margin:2px 4px 14px}
+  .post-body,.post-text{font-size:15px}
+
+  /* 内容加一个居中上限：@app 放开了 600px 上限之后，844 宽的手机上磁贴会被拉成
+     三块巨大的方块（一片绿 + 三个大方块），很失衡。压到 720px 居中即可 ——
+     和 >900px 档给时间线的阅读列上限保持一致。 */
+  .desk-inner,.gal-inner,.stat-inner{max-width:720px;margin-left:auto;margin-right:auto}
+  #settingsScroll > *{max-width:720px;margin-left:auto;margin-right:auto}
+  .tiles{max-width:520px}
+
+  /* 锁屏：横屏下键盘和圆点要能同屏放下，收窄并缩小间距 */
+  .lock-inner{max-width:340px}
+  .lock-icon{width:44px;height:44px;border-radius:13px;margin-bottom:10px}
+  .lock-dots{margin:14px 0 4px}
+}
+</style>
+</head>
+<body>
+<div id="app" class="booting" data-theme="light">
+
+  <!-- ============ 1. 封面页：品牌入口 ============ -->
+  <section class="screen" id="screen-cover">
+    <div class="cover-inner">
+      <div class="cover-mark">
+        <svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="#F2F5F8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4.5" y="3.5" width="15" height="17" rx="2.6"/>
+          <path d="M8.6 3.5v17"/><path d="M12.2 9.2h4M12.2 13.2h4"/>
+        </svg>
+      </div>
+      <h1 class="cover-title">我的日记</h1>
+      <p class="cover-sub">写给自己的日子</p>
+      <div class="cover-rule"></div>
+      <p class="cover-meta">已记录 <b id="coverCount">0</b> 篇 · 最近更新 <span id="coverLast">暂无</span></p>
+      <div class="cover-auto"><span class="cover-auto-bar" id="coverProgress"></span></div>
+      <p class="cover-enter-hint">正在进入…（点击可立即进入）</p>
+    </div>
+    <p class="cover-foot">所有内容仅保存在本机浏览器 · 仅你可见</p>
+  </section>
+
+  <!-- ============ 2. 首页 ============ -->
+  <section class="screen pane active" id="screen-home">
+    <div class="scroll">
+      <div class="desk-inner">
+        <header class="desk-hello">
+          <div class="desk-date" id="deskDate"></div>
+          <h1 class="desk-greet" id="deskGreet">你好</h1>
+          <p class="desk-sub" id="deskSub">还没有记录，从今天开始吧。</p>
+        </header>
+
+        <button class="desk-primary" id="deskWrite">
+          <span class="dp-ico">
+            <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4.8 19.2l.9-4.2L15.9 4.8a1.9 1.9 0 0 1 2.7 0l.6.6a1.9 1.9 0 0 1 0 2.7L9 18.3z"/>
+              <path d="M14.4 6.3l3.3 3.3"/>
+            </svg>
+          </span>
+          <span class="dp-text">
+            <b>写点什么</b>
+            <i>记录此刻的想法，最多可附 9 张图片</i>
+          </span>
+          <span class="dp-arrow">
+            <svg width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 1.5 7 7.5l-5.5 6"/></svg>
+          </span>
+        </button>
+
+        <div class="desk-body">
+          <div class="tiles" id="deskTiles">
+            <button class="tile" data-go="timeline">
+              <span class="tile-ico">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.2h14M4 12h16M4 16.8h10"/></svg>
+              </span>
+              <span class="tile-label">时间线</span>
+              <span class="tile-badge" id="badgeTimeline" data-zero="1">0</span>
+            </button>
+            <button class="tile" data-go="gallery">
+              <span class="tile-ico">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3.6" y="5.2" width="16.8" height="13.6" rx="2.6"/>
+                  <circle cx="8.6" cy="9.8" r="1.5"/>
+                  <path d="M5 16.6l4.1-4.1 2.9 2.9 2.5-2.5 4.4 4.4"/>
+                </svg>
+              </span>
+              <span class="tile-label">相册</span>
+              <span class="tile-badge" id="badgeGallery" data-zero="1">0</span>
+            </button>
+            <button class="tile" data-go="search">
+              <span class="tile-ico">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.6" cy="10.6" r="6"/><path d="M15 15l4.6 4.6"/></svg>
+              </span>
+              <span class="tile-label">搜索</span>
+            </button>
+            <button class="tile" data-go="stats">
+              <span class="tile-ico">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 19.2v-6.4M12 19.2V5M18 19.2v-9.6"/></svg>
+              </span>
+              <span class="tile-label">统计</span>
+            </button>
+            <button class="tile" data-go="backup">
+              <span class="tile-ico">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 4v10.2"/><path d="M8.2 10.6l3.8 3.8 3.8-3.8"/>
+                  <path d="M5 17.6v1.2A1.7 1.7 0 0 0 6.7 20.5h10.6a1.7 1.7 0 0 0 1.7-1.7v-1.2"/>
+                </svg>
+              </span>
+              <span class="tile-label">备份</span>
+            </button>
+            <button class="tile" data-go="mine" id="tileSettings">
+              <span class="tile-ico">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4.6 8.2h14.8M4.6 15.8h14.8"/>
+                  <circle cx="9.4" cy="8.2" r="2.3"/><circle cx="14.6" cy="15.8" r="2.3"/>
+                </svg>
+              </span>
+              <span class="tile-label">设置</span>
+            </button>
+          </div>
+
+          <div class="desk-recent" id="deskRecent"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 3. 时间线（封面 + 动态流） ============ -->
+  <section class="screen pane" id="screen-timeline">
+    <header class="nav">
+      <button class="nav-btn nav-back" id="btnTimelineHome" data-back-home aria-label="返回首页" hidden>
+        <svg width="11" height="19" viewBox="0 0 11 19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 1.5 2 9.5l7.5 8"/></svg>
+      </button>
+      <span class="nav-title">时间线</span>
+      <button class="nav-btn right" id="btnCamera" aria-label="写日记">
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.2a1.5 1.5 0 0 0 1.3-.75l.6-1A1.5 1.5 0 0 1 9.9 3.5h4.2a1.5 1.5 0 0 1 1.3.75l.6 1A1.5 1.5 0 0 0 17.3 6h1.2A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/>
+          <circle cx="12" cy="12.5" r="3.4"/>
+        </svg>
+      </button>
+      <button class="nav-btn" id="btnSettings" aria-label="设置">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <circle cx="12" cy="12" r="3.2"/>
+          <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.05A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.05A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3.05V3a2 2 0 1 1 4 0v.05A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v.05a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.05a1.7 1.7 0 0 0-1.55 1z"/>
+        </svg>
+      </button>
+    </header>
+    <div class="scroll" id="homeScroll">
+      <!-- 下拉手势操作的是这一层（内容层），不是滚动区本身。
+           直接下移滚动区会把它的上边缘一起带走、在顶部露出背景色；
+           移动内容层则上边缘不动，由封面反向 transform + 放大去填满露出的空白。 -->
+      <div class="tl-pull" id="tlPull">
+        <div class="cover">
+          <div class="cover-shade"></div>
+          <img id="coverImg" alt="" style="display:none">
+          <button class="cover-add" id="btnCover">更换封面</button>
+        </div>
+        <div class="me">
+          <div class="me-avatar" id="meAvatar"></div>
+          <div class="me-info">
+            <div class="me-name" id="meName">我</div>
+            <div class="me-sign" id="meSign"></div>
+            <div class="me-stat" id="meStat"></div>
+          </div>
+        </div>
+        <div class="timeline" id="timeline"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 4. 相册 ============ -->
+  <section class="screen pane" id="screen-gallery">
+    <header class="nav">
+      <button class="nav-btn nav-back" id="btnGalleryHome" data-back-home aria-label="返回首页" hidden>
+        <svg width="11" height="19" viewBox="0 0 11 19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 1.5 2 9.5l7.5 8"/></svg>
+      </button>
+      <span class="nav-title">相册</span>
+    </header>
+    <div class="scroll" id="galleryScroll">
+      <div class="gal-inner" id="galInner"></div>
+    </div>
+  </section>
+
+  <!-- ============ 5. 发布 / 编辑页 ============ -->
+  <section class="screen page" id="screen-composer">
+    <header class="nav">
+      <button class="nav-btn nav-back" id="btnCancelCompose" aria-label="返回">
+        <svg width="11" height="19" viewBox="0 0 11 19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 1.5 2 9.5l7.5 8"/></svg>
+      </button>
+      <span class="nav-title" id="composerTitle">写日记</span>
+      <button class="nav-btn right link-green" id="btnPublish" disabled>发表</button>
+    </header>
+    <div class="composer-body">
+      <textarea id="composerText" placeholder="这一刻的想法…" maxlength="2000" rows="1"></textarea>
+      <div class="cgrid" id="composerGrid"></div>
+      <div class="counter" id="composerCounter">0/2000</div>
+      <div class="composer-tip" id="composerTip"></div>
+    </div>
+  </section>
+
+  <!-- ============ 6. 我的（原设置页，改为标签面板） ============ -->
+  <section class="screen pane" id="screen-settings">
+    <header class="nav">
+      <button class="nav-btn nav-back" id="btnMineHome" data-back-home aria-label="返回首页" hidden>
+        <svg width="11" height="19" viewBox="0 0 11 19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 1.5 2 9.5l7.5 8"/></svg>
+      </button>
+      <span class="nav-title">我的</span>
+    </header>
+    <div class="scroll" id="settingsScroll">
+
+      <div class="set-group-title">个人资料</div>
+      <div class="set-group">
+        <button class="set-row" id="setAvatar">
+          <span class="set-label">头像</span>
+          <span class="set-value" id="setAvatarPreview"></span>
+          <svg class="set-arrow" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5 7 7.5l-5.5 6"/></svg>
+        </button>
+        <div class="set-row">
+          <span class="set-label">昵称</span>
+          <input class="set-input" id="setNickname" maxlength="16" placeholder="我">
+        </div>
+        <div class="set-row">
+          <span class="set-label">签名</span>
+          <input class="set-input" id="setSign" maxlength="40" placeholder="写句话给未来的自己">
+        </div>
+      </div>
+
+      <div class="set-group-title">隐私（仅本人可见）</div>
+      <div class="set-group">
+        <button class="set-row" id="setLock">
+          <span class="set-label">打开时验证密码</span>
+          <span class="set-value" id="pinSwitchHint"></span>
+          <span class="switch" id="switchLock"><i></i></span>
+        </button>
+        <button class="set-row" id="setChangePin">
+          <span class="set-label" id="pinRowLabel">设置密码</span>
+          <span class="set-value" id="pinStateText">未设置</span>
+          <svg class="set-arrow" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5 7 7.5l-5.5 6"/></svg>
+        </button>
+        <button class="set-row danger" id="setClosePin" hidden>
+          <span class="set-label">关闭密码</span>
+        </button>
+        <button class="set-row" id="setAutoLockRow">
+          <span class="set-label">离开后自动上锁</span>
+          <span class="set-value" id="setAutoLock">1 分钟</span>
+          <svg class="set-arrow" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5 7 7.5l-5.5 6"/></svg>
+        </button>
+      </div>
+      <div class="set-note" id="lockNote">密码是可选功能，默认不开启；不设置时打开应用直接进入日记。开启后每次进入都需输入 6 位数字。</div>
+
+      <div class="set-group-title">外观</div>
+      <div class="set-group">
+        <button class="set-row" id="setTheme">
+          <span class="set-label">深色模式</span>
+          <span class="switch" id="switchTheme"><i></i></span>
+        </button>
+        <button class="set-row" id="setCover">
+          <span class="set-label">启动时显示封面页</span>
+          <span class="switch" id="switchCover"><i></i></span>
+        </button>
+      </div>
+
+      <div class="set-group-title">数据（本机存储）</div>
+      <div class="set-group">
+        <button class="set-row" id="setExport">
+          <span class="set-label">导出备份</span>
+          <span class="set-value" id="exportHint"></span>
+          <svg class="set-arrow" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5 7 7.5l-5.5 6"/></svg>
+        </button>
+        <button class="set-row" id="setImport">
+          <span class="set-label">导入备份</span>
+          <span class="set-value">JSON · 文本</span>
+          <svg class="set-arrow" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5 7 7.5l-5.5 6"/></svg>
+        </button>
+      </div>
+      <div class="set-note" id="storageNote">存储方式：IndexedDB（本地数据库）</div>
+      <div class="storage-bar" id="storageBar"><i></i></div>
+
+      <div class="set-group-title">危险操作</div>
+      <div class="set-group">
+        <button class="set-row danger" id="setClear">
+          <span class="set-label">清空全部日记</span>
+          <svg class="set-arrow" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5 7 7.5l-5.5 6"/></svg>
+        </button>
+      </div>
+      <div class="set-note">数据只存在于当前浏览器的本地数据库中。清除浏览器数据、更换设备或卸载应用都会导致日记丢失，请定期导出备份。</div>
+      <div style="height:40px"></div>
+    </div>
+  </section>
+
+  <!-- ============ 7. 搜索 ============ -->
+  <section class="screen page" id="screen-search">
+    <header class="nav">
+      <button class="nav-btn nav-back" id="btnSearchBack" aria-label="返回">
+        <svg width="11" height="19" viewBox="0 0 11 19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 1.5 2 9.5l7.5 8"/></svg>
+      </button>
+      <div class="search-bar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.6" cy="10.6" r="6"/><path d="M15 15l4.6 4.6"/></svg>
+        <input id="searchInput" type="text" placeholder="搜索日记内容" autocomplete="off" enterkeyhint="search">
+        <button id="btnSearchClear" hidden aria-label="清空">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+    </header>
+    <div class="scroll">
+      <div id="searchResults"></div>
+    </div>
+  </section>
+
+  <!-- ============ 8. 统计 ============ -->
+  <section class="screen page" id="screen-stats">
+    <header class="nav">
+      <button class="nav-btn nav-back" id="btnStatsBack" aria-label="返回">
+        <svg width="11" height="19" viewBox="0 0 11 19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 1.5 2 9.5l7.5 8"/></svg>
+      </button>
+      <span class="nav-title">统计</span>
+    </header>
+    <div class="scroll">
+      <div class="stat-inner" id="statInner"></div>
+    </div>
+  </section>
+
+  <!-- ============ 9. 主导航：底部标签栏（≥900px 变左侧栏） ============ -->
+  <nav class="tabbar" id="tabbar">
+    <span class="brand">
+      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4.5" y="3.5" width="15" height="17" rx="2.6"/>
+        <path d="M8.6 3.5v17"/><path d="M12.2 9.2h4M12.2 13.2h4"/>
+      </svg>
+    </span>
+    <button class="tab on" data-tab="home">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3.8" y="3.8" width="7" height="7" rx="2"/><rect x="13.2" y="3.8" width="7" height="7" rx="2"/>
+        <rect x="3.8" y="13.2" width="7" height="7" rx="2"/><rect x="13.2" y="13.2" width="7" height="7" rx="2"/>
+      </svg>
+      <span>首页</span>
+    </button>
+    <button class="tab" data-tab="timeline">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.2h14M4 12h16M4 16.8h10"/></svg>
+      <span>时间线</span>
+    </button>
+    <button class="tab" data-tab="gallery">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3.6" y="5.2" width="16.8" height="13.6" rx="2.6"/>
+        <circle cx="8.6" cy="9.8" r="1.5"/>
+        <path d="M5 16.6l4.1-4.1 2.9 2.9 2.5-2.5 4.4 4.4"/>
+      </svg>
+      <span>相册</span>
+    </button>
+    <button class="tab" data-tab="mine">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="8.4" r="3.6"/><path d="M4.9 19.8c0-3.5 3.2-5.7 7.1-5.7s7.1 2.2 7.1 5.7"/>
+      </svg>
+      <span>我的</span>
+    </button>
+  </nav>
+
+  <!-- 写日记：窄屏悬浮球 / 宽屏落在左侧栏底部 -->
+  <button class="fab" id="fabWrite" aria-label="写日记">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4.8 19.2l.9-4.2L15.9 4.8a1.9 1.9 0 0 1 2.7 0l.6.6a1.9 1.9 0 0 1 0 2.7L9 18.3z"/>
+      <path d="M14.4 6.3l3.3 3.3"/>
+    </svg>
+  </button>
+
+  <!-- ============ 10. 锁屏 ============ -->
+  <section class="screen" id="screen-lock">
+    <div class="lock-inner">
+      <div class="lock-icon">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="10.5" width="16" height="10.5" rx="2.4"/>
+          <path d="M8 10.5V7.6a4 4 0 0 1 8 0v2.9"/>
+          <circle cx="12" cy="15.7" r="1.1" fill="#fff" stroke="none"/>
+        </svg>
+      </div>
+      <div class="lock-title" id="lockTitle">输入密码</div>
+      <div class="lock-sub" id="lockSub">日记仅本人可见</div>
+      <div class="lock-dots" id="lockDots"></div>
+      <div class="keypad" id="keypad">
+        <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+        <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+        <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+        <span class="blank"></span><button data-k="0">0</button>
+        <button class="fn" data-k="del">删除</button>
+      </div>
+      <div class="lock-foot">
+        <button id="lockForgot">忘记密码</button>
+        <button id="lockSkip" style="display:none">暂不设置</button>
+        <button id="lockOff" style="display:none">关闭密码</button>
+        <button id="lockCancel" style="display:none">取消</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 5. 图片查看器 ============ -->
+  <div class="viewer" id="viewer">
+    <div class="viewer-top">
+      <button class="nav-btn" id="viewerClose" aria-label="关闭" style="color:#fff">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M1.5 1.5l13 13M14.5 1.5l-13 13"/></svg>
+      </button>
+      <span class="viewer-count" id="viewerCount">1/1</span>
+    </div>
+    <div class="viewer-track" id="viewerTrack"></div>
+  </div>
+
+  <!-- ============ 6. 全局遮罩：操作面板 / 对话框 ============ -->
+  <div class="mask" id="mask">
+    <div class="sheet" id="actionSheet" style="display:none"></div>
+    <div class="dialog" id="dialog" style="display:none">
+      <div class="dialog-title" id="dialogTitle"></div>
+      <div class="dialog-text" id="dialogText"></div>
+      <div class="dialog-btns" id="dialogBtns"></div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+  <input type="file" id="filePicker" accept="image/*" multiple hidden>
+  <input type="file" id="filePickerSingle" accept="image/*" hidden>
+  <!-- 拍照专用入口：capture 在手机 / 安卓 WebView 上会直接调起系统相机，
+       桌面浏览器不认识这个属性、会退化成普通选图框，不影响网页版使用。 -->
+  <input type="file" id="fileCamera" accept="image/*" capture="environment" hidden>
+  <!-- accept 会在用户选完导入格式后被改写（json / txt / md），这里给个宽容的初值 -->
+  <input type="file" id="fileImport" accept="application/json,.json,text/plain,.txt,text/markdown,.md" hidden>
+</div>
+
+<script>
+(function () {
+'use strict';
+
+/* ==========================================================================
+   0. 基础工具层  Util
+   ========================================================================== */
+var $ = function (s, r) { return (r || document).querySelector(s); };
+var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+/** 取某时间戳当天 0 点的时间戳（算"相差多少天"必须先把时分秒抹掉，否则会差一天） */
+function startOfDay(ts) {
+  var d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/* ==========================================================================
+   文本格式化  TextFmt
+   关键：textarea 的换行是标准 \n，但用户从别处粘贴进来的可能是 \r\n 或单独的 \r。
+   不统一的话，「时间线显示」和「导出的 JSON」会跟用户看到的不一样。
+   —— 这是「怎么写的就怎么显示」的唯一入口，展示与导出都走这里。
+   ========================================================================== */
+var TextFmt = {
+  /** 统一换行符：\r\n / \r → \n。入库与展示前都要过一遍 */
+  normalize: function (s) { return String(s == null ? '' : s).replace(/\r\n?/g, '\n'); },
+  /** 结构信息：行数与是否多行，用于决定要不要显示「更多」 */
+  lines: function (s) { return TextFmt.normalize(s).split('\n'); },
+  lineCount: function (s) { return TextFmt.lines(s).length; },
+  /**
+   * 转义成 HTML 并按原文换行显示。
+   * 换行**只**由这里的 <br> 负责：容器一律 white-space:normal。
+   * 千万不能两边都做（容器再开 pre-wrap 的话，源码换行符和 <br> 会各渲染一次，
+   * 行距直接翻倍）；显式 <br> 也比交给 pre-wrap 更可控——部分 Android WebView
+   * 对连续空行的折叠规则不一致，转成 <br> 后各端表现统一，也和导出的文本严格对应。
+   */
+  toHtml: function (s) {
+    return escapeHtml(TextFmt.normalize(s)).replace(/\n/g, '<br>');
+  },
+  /**
+   * 折叠信息：超过 n 行就返回完整 HTML + truncated 标记。
+   * 注意这里**不裁 HTML** —— 全文都要留在 DOM 里，靠 CSS 的 -webkit-line-clamp 裁显示。
+   * 只有这样才能"点更多就展开"：如果渲染时就把后面几行丢掉了，展开时手上根本没有内容可用。
+   * hidden 是给「更多（还有 N 行）」文案用的纯数字。
+   */
+  fold: function (s, n) {
+    var all = TextFmt.lines(s);
+    var hidden = all.length - n;
+    return {
+      html: TextFmt.toHtml(s),
+      truncated: hidden > 0,
+      hidden: hidden > 0 ? hidden : 0
+    };
+  }
+};
+
+var toastTimer = null;
+function toast(msg, ms) {
+  var el = $('#toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { el.classList.remove('show'); }, ms || 1900);
+}
+
+/* ==========================================================================
+   0.5 原生外壳适配层  Native（Capacitor）
+   ---------------------------------------------------------------------------
+   用浏览器直接打开 index.html 时 window.Capacitor 不存在，isNative 恒为 false，
+   下面所有原生分支一律不生效 —— 网页版行为与打包成 App 之前完全一致。
+   打成 Android / iOS 安装包后，原生侧会注入 window.Capacitor，
+   并生成 window.Capacitor.Plugins.<插件名> 的代理对象。
+   ========================================================================== */
+var Native = (function () {
+  var cap = (typeof window !== 'undefined' && window.Capacitor) || null;
+  var plat = (cap && typeof cap.getPlatform === 'function') ? cap.getPlatform() : 'web';
+  var isNative = !!(cap && (typeof cap.isNativePlatform === 'function'
+    ? cap.isNativePlatform()
+    : (plat === 'android' || plat === 'ios')));
+  var cache = {};
+
+  /** 取原生插件代理；拿不到返回 null，调用方据此回退到网页实现 */
+  function plugin(name) {
+    if (!isNative) return null;
+    if (name in cache) return cache[name];
+    var p = null;
+    try {
+      if (cap.Plugins && cap.Plugins[name]) p = cap.Plugins[name];
+      else if (typeof cap.registerPlugin === 'function') p = cap.registerPlugin({ name: name }) || null;
+    } catch (e) { p = null; }
+    if (!p) console.warn('[Native] 插件不可用：' + name);
+    cache[name] = p;
+    return p;
+  }
+
+  /**
+   * 字符串 → UTF-8 base64。不能直接 btoa(中文)，会抛 InvalidCharacterError。
+   *
+   * ⚠️ 只做编码工具，**不要**再拿它去配 `Filesystem.writeFile`：
+   *    Capacitor 8 的 `Encoding` 枚举里已经没有 base64 了，传 `encoding:'base64'`
+   *    会被当成非法值，插件把 base64 字符串原样写进文件，谁都解析不出来。
+   *    写文本用 `encoding:'utf8'` + 原始字符串即可（见 saveBackupFile）。
+   */
+  function toBase64(str) {
+    var bytes = new TextEncoder().encode(str);
+    var CHUNK = 0x8000, out = '';
+    for (var i = 0; i < bytes.length; i += CHUNK) {
+      out += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    }
+    return btoa(out);
+  }
+
+  /**
+   * 插件是否真的可用（**不产生警告**）。
+   * 用途：Camera 是可选依赖 —— 没装、或用户还没跑 `npx cap sync` 时，
+   * 我们要安静地退回网页实现（<input capture>），而不是每次都往控制台吐一句
+   * 「插件不可用」。真要调用时仍然走 plugin()，那时拿不到才有必要警告。
+   */
+  function hasPlugin(name) {
+    if (!isNative) return false;
+    try {
+      if (cap.Plugins && cap.Plugins[name]) return true;
+      return typeof cap.registerPlugin === 'function' && !!cap.registerPlugin({ name: name });
+    } catch (e) { return false; }
+  }
+
+  return { isNative: isNative, platform: plat, plugin: plugin, hasPlugin: hasPlugin, toBase64: toBase64 };
+})();
+
+/* ---------------- 原生：系统返回键 ---------------- */
+/**
+ * 处理一次「返回」。
+ * 优先级：弹层 → 图片查看器 → 锁屏（吃掉，不给退）→ 二级页 → 交还系统（退出 App）。
+ * @returns {boolean} true 表示本次返回已被应用消费
+ */
+function handleBackKey() {
+  if ($('#mask').classList.contains('show')) { closeMask(); return true; }
+  if ($('#viewer').classList.contains('show')) { closeViewer(); return true; }
+  // 锁屏时返回键不生效，避免绕开密码
+  if ($('#screen-lock').classList.contains('show')) return true;
+  // 二级页复用各自的返回按钮，保证「有草稿要二次确认」等逻辑完全一致
+  if ($('#screen-composer').classList.contains('active')) { $('#btnCancelCompose').click(); return true; }
+  if ($('#screen-search').classList.contains('active')) { $('#btnSearchBack').click(); return true; }
+  if ($('#screen-stats').classList.contains('active')) { $('#btnStatsBack').click(); return true; }
+  // 从首页磁贴跳进的标签页：返回键回首页，而不是直接把 App 退掉
+  // （从底部栏切进来的不拦，保持"再按一次退出"的老行为）
+  if (State.tab !== 'home' && State.tabVia === 'tile') { switchTab('home', 'tab'); return true; }
+  return false;
+}
+
+/** 绑定系统返回键（仅 App 内生效；不注册的话 Capacitor 会直接退出应用） */
+function bindNativeBackButton() {
+  if (!Native.isNative) return;
+  var App = Native.plugin('App');
+  if (!App || !App.addListener) return;
+  App.addListener('backButton', function () {
+    if (!handleBackKey() && App.exitApp) App.exitApp();
+  });
+}
+
+/* ---------------- 原生：拍照过程中 App 被回收后恢复 ---------------- */
+/**
+ * 相机是**独立 Activity**：它在前台时本 App 可能被系统回收（低内存 / 后台太久）。
+ * 插件官方要求监听 appRestoredResult 才能把那次拍照的结果找回来 ——
+ * 不接这个监听，用户拍完回来会看到照片凭空消失（更糟的是连相机返回的回调也没了）。
+ * 这里在 store 就绪后再把恢复下来的照片补进发布页。
+ */
+function bindNativeCameraRestore(onReady) {
+  if (!Native.isNative || !Native.hasPlugin('Camera')) return;
+  var App = Native.plugin('App');
+  if (!App || !App.addListener) return;
+  App.addListener('appRestoredResult', function (data) {
+    if (!data || data.pluginId !== 'Camera' || !data.success || !data.data) return;
+    onReady(function () {
+      photoBlob(data.data).then(function (blob) {
+        if (!blob) return;
+        openComposer(null);
+        // 同样不能用 addImages(...).then()：它**任何分支都不返回 Promise**
+        // （正常路径也是隐式 undefined），链式调用必崩（踩过两次）。
+        var outcome = addCameraDraftImage(blob);
+        toast(outcome.ok ? '已找回拍照时的照片' : ('已找回拍照时的照片。' + outcome.toast));
+      }).catch(function (e) { console.warn('[Camera] 恢复拍照结果失败', e); });
+    });
+  });
+}
+
+/* ---------------- 原生：状态栏跟随主题 ---------------- */
+/** 把当前主题同步给系统状态栏，否则深色下状态栏图标会看不见 */
+function syncNativeStatusBar(dark) {
+  if (!Native.isNative) return;
+  var StatusBar = Native.plugin('StatusBar');
+  if (!StatusBar) return;
+  try {
+    // Capacitor 的语义：DARK = 深色背景配浅色图标，LIGHT = 浅色背景配深色图标
+    if (StatusBar.setStyle) StatusBar.setStyle({ style: dark ? 'DARK' : 'LIGHT' });
+    if (StatusBar.setBackgroundColor) StatusBar.setBackgroundColor({ color: dark ? '#0F0F0F' : '#EDEDED' });
+  } catch (e) { /* 部分机型 / API 35+ 边到边模式下设置背景色会被忽略，不影响功能 */ }
+}
+
+/* ---------------- 原生：备份文件落盘 ---------------- */
+/**
+ * 保存备份。
+ * 浏览器：<a download> + Blob URL。
+ * App 内：<a download> 在 Android WebView 里不生效，改为写入缓存目录后调起系统分享面板
+ *         （可存到「文件」、发微信、传电脑）。
+ *
+ * ⚠️ 编码参数只能写 utf8。Capacitor 8 的 `Encoding` 枚举**只剩 utf8 / ascii / utf16**，
+ *    以前那个 `Encoding.BASE64` 已经被移除了 —— 传 `encoding:'base64'` 属于非法值，
+ *    插件不认，就把字符串**原样按文本写盘**，结果是「.json 文件里其实是 base64 文本」，
+ *    用任何解析器都读不出内容（用户看到的就是一堆乱码，以为备份里不是自己的日记）。
+ *    要写字符串就 `encoding:'utf8'` + 原始文本，别再做 base64 往返。
+ */
+function saveBackupFile(fileName, text, mime) {
+  if (!Native.isNative) {
+    var blob = new Blob([text], { type: mime || 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+    return Promise.resolve('download');
+  }
+  var Filesystem = Native.plugin('Filesystem');
+  var Share = Native.plugin('Share');
+  if (!Filesystem || !Share) return Promise.reject(new Error('原生文件插件未就绪'));
+  return Filesystem.writeFile({
+    path: fileName,
+    data: text,
+    directory: 'CACHE',
+    encoding: 'utf8',
+    recursive: true
+  }).then(function (res) {
+    return Share.share({
+      title: '我的日记备份',
+      text: fileName,
+      url: res.uri,
+      dialogTitle: '保存或分享备份文件'
+    });
+  }).then(function () { return 'share'; });
+}
+
+/* ==========================================================================
+   1. 时间格式化层  TimeFmt
+   规则（仿朋友圈）：刚刚 / N分钟前 / 今天 HH:mm / 昨天 HH:mm / M月D日 HH:mm / YYYY年M月D日
+   ========================================================================== */
+var TimeFmt = {
+  rel: function (ts) {
+    var d = new Date(ts), now = new Date();
+    var diff = now.getTime() - ts;
+    if (diff < 60 * 1000) return '刚刚';
+    if (diff < 60 * 60 * 1000) return Math.floor(diff / 60000) + '分钟前';
+    var sameDay = d.toDateString() === now.toDateString();
+    if (sameDay) return '今天 ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+    var y = new Date(now.getTime() - 86400000);
+    if (d.toDateString() === y.toDateString()) return '昨天 ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+    if (d.getFullYear() === now.getFullYear()) {
+      return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+    }
+    return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日';
+  },
+  full: function (ts) {
+    var d = new Date(ts);
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
+      ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  },
+  /** 用于「今天/昨天」之外的日期分组比较 */
+  dayKey: function (ts) {
+    var d = new Date(ts);
+    return d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate();
+  }
+};
+
+/* ==========================================================================
+   2. 图片处理层  ImageProc
+   职责：读取文件 -> 按最长边缩放 -> canvas 转 JPEG Blob（大幅降低存储体积）
+   ========================================================================== */
+var ImageProc = {
+  MAX_SIDE: 1600,
+  QUALITY: 0.82,
+
+  readFile: function (file) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () { resolve(fr.result); };
+      fr.onerror = function () { reject(fr.error || new Error('读取失败')); };
+      fr.readAsDataURL(file);
+    });
+  },
+
+  loadImage: function (src) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () { resolve(img); };
+      img.onerror = function () { reject(new Error('图片解码失败')); };
+      img.src = src;
+    });
+  },
+
+  /** 等比压缩；GIF/PNG 透明会转白底输出 JPEG */
+  compress: function (file) {
+    var self = this;
+    return this.readFile(file).then(function (dataUrl) {
+      return self.loadImage(dataUrl).then(function (img) {
+        var w = img.naturalWidth || img.width;
+        var h = img.naturalHeight || img.height;
+        var scale = Math.min(1, self.MAX_SIDE / Math.max(w, h));
+        var tw = Math.max(1, Math.round(w * scale));
+        var th = Math.max(1, Math.round(h * scale));
+        var canvas = document.createElement('canvas');
+        canvas.width = tw; canvas.height = th;
+        var ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, tw, th);
+        ctx.drawImage(img, 0, 0, tw, th);
+        return new Promise(function (resolve) {
+          canvas.toBlob(function (blob) {
+            // canvas 不可用或压缩无收益时，退回原文件
+            if (!blob) {
+              resolve({ blob: file, w: w, h: h, size: file.size });
+            } else {
+              resolve({ blob: blob, w: tw, h: th, size: blob.size });
+            }
+          }, 'image/jpeg', self.QUALITY);
+        });
+      });
+    });
+  },
+
+  blobToDataURL: function (blob) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () { resolve(fr.result); };
+      fr.onerror = function () { reject(fr.error); };
+      fr.readAsDataURL(blob);
+    });
+  },
+
+  dataURLToBlob: function (dataUrl) {
+    var parts = String(dataUrl).split(',');
+    var mime = (parts[0].match(/:(.*?);/) || [, 'image/jpeg'])[1];
+    var bin = atob(parts[1] || '');
+    var len = bin.length;
+    var u8 = new Uint8Array(len);
+    for (var i = 0; i < len; i++) u8[i] = bin.charCodeAt(i);
+    return new Blob([u8], { type: mime });
+  },
+
+  fmtSize: function (bytes) {
+    if (!bytes) return '0 B';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+  }
+};
+
+/* ==========================================================================
+   3. 存储层  Store
+   设计：IndexedDB 为唯一数据源（entries / images 两个对象仓库），
+        若 IndexedDB 不可用（如部分浏览器的 file:// 策略、隐私模式）自动降级到
+        localStorage（图片转 dataURL，容量受限，界面上会给出提示）。
+   对外暴露统一的异步 API，上层不感知后端差异。
+   ========================================================================== */
+var Store = (function () {
+  var DB_NAME = 'wechat-diary';
+  var DB_VER = 1;
+  var LS_PREFIX = 'wd_';
+  var backend = null;
+  var mode = 'idb';          // 'idb' | 'local'
+  var memFallback = null;    // localStorage 也不可用时的内存兜底
+
+  /* ---------- IDB 辅助 ---------- */
+  function openIDB() {
+    return new Promise(function (resolve, reject) {
+      if (!window.indexedDB) return reject(new Error('no-indexeddb'));
+      var req;
+      try { req = indexedDB.open(DB_NAME, DB_VER); } catch (e) { return reject(e); }
+      req.onupgradeneeded = function () {
+        var db = req.result;
+        if (!db.objectStoreNames.contains('entries')) {
+          var es = db.createObjectStore('entries', { keyPath: 'id' });
+          es.createIndex('createdAt', 'createdAt', { unique: false });
+        }
+        if (!db.objectStoreNames.contains('images')) {
+          var is = db.createObjectStore('images', { keyPath: 'id' });
+          is.createIndex('entryId', 'entryId', { unique: false });
+        }
+      };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error || new Error('idb-error')); };
+      req.onblocked = function () { reject(new Error('idb-blocked')); };
+    });
+  }
+  function reqP(r) {
+    return new Promise(function (res, rej) {
+      r.onsuccess = function () { res(r.result); };
+      r.onerror = function () { rej(r.error); };
+    });
+  }
+  function txDone(t) {
+    return new Promise(function (res, rej) {
+      t.oncomplete = function () { res(); };
+      t.onerror = function () { rej(t.error); };
+      t.onabort = function () { rej(t.error || new Error('abort')); };
+    });
+  }
+
+  var idbBackend = {
+    db: null,
+    init: function () { var self = this; return openIDB().then(function (db) { self.db = db; }); },
+    listEntries: function () {
+      var t = this.db.transaction('entries', 'readonly');
+      return reqP(t.objectStore('entries').getAll());
+    },
+    putEntry: function (e) {
+      var t = this.db.transaction('entries', 'readwrite');
+      t.objectStore('entries').put(e);
+      return txDone(t);
+    },
+    deleteEntry: function (id) {
+      var t = this.db.transaction('entries', 'readwrite');
+      t.objectStore('entries').delete(id);
+      return txDone(t);
+    },
+    getImage: function (id) {
+      var t = this.db.transaction('images', 'readonly');
+      return reqP(t.objectStore('images').get(id));
+    },
+    putImage: function (rec) {
+      var t = this.db.transaction('images', 'readwrite');
+      t.objectStore('images').put(rec);
+      return txDone(t);
+    },
+    deleteImage: function (id) {
+      var t = this.db.transaction('images', 'readwrite');
+      t.objectStore('images').delete(id);
+      return txDone(t);
+    },
+    listImages: function () {
+      var t = this.db.transaction('images', 'readonly');
+      return reqP(t.objectStore('images').getAll());
+    },
+    /** 只清空日记及其图片，保留封面 / 头像等个人资料图 */
+    clear: function () {
+      var db = this.db;
+      return reqP(db.transaction('images', 'readonly').objectStore('images').getAll()).then(function (imgs) {
+        var t = db.transaction(['entries', 'images'], 'readwrite');
+        var ents = t.objectStore('entries');
+        var imgs2 = t.objectStore('images');
+        return new Promise(function (resolve, reject) {
+          t.oncomplete = function () { resolve(); };
+          t.onerror = function () { reject(t.error); };
+          ents.clear();
+          (imgs || []).forEach(function (r) {
+            if (r.entryId !== '__profile__') imgs2.delete(r.id);
+          });
+        });
+      });
+    }
+  };
+
+  /* ---------- localStorage 降级实现 ---------- */
+  function lsGet(k, dft) {
+    try {
+      var v = localStorage.getItem(LS_PREFIX + k);
+      return v == null ? dft : JSON.parse(v);
+    } catch (e) { return dft; }
+  }
+  function lsSet(k, v) {
+    try { localStorage.setItem(LS_PREFIX + k, JSON.stringify(v)); return true; }
+    catch (e) { return false; }
+  }
+  var localBackend = {
+    init: function () {
+      try { localStorage.setItem(LS_PREFIX + '__t', '1'); localStorage.removeItem(LS_PREFIX + '__t'); }
+      catch (e) { throw new Error('no-storage'); }
+      return Promise.resolve();
+    },
+    listEntries: function () { return Promise.resolve(lsGet('entries', [])); },
+    putEntry: function (e) {
+      var list = lsGet('entries', []);
+      var i = list.findIndex(function (x) { return x.id === e.id; });
+      if (i >= 0) list[i] = e; else list.push(e);
+      return lsSet('entries', list) ? Promise.resolve() : Promise.reject(new Error('quota'));
+    },
+    deleteEntry: function (id) {
+      var list = lsGet('entries', []).filter(function (x) { return x.id !== id; });
+      return lsSet('entries', list) ? Promise.resolve() : Promise.reject(new Error('quota'));
+    },
+    getImage: function (id) {
+      var rec = lsGet('img_' + id, null);
+      if (!rec) return Promise.resolve(null);
+      rec.blob = ImageProc.dataURLToBlob(rec.data);
+      return Promise.resolve(rec);
+    },
+    putImage: function (rec) {
+      var self = this;
+      return ImageProc.blobToDataURL(rec.blob).then(function (dataUrl) {
+        var ok = lsSet('img_' + rec.id, { id: rec.id, entryId: rec.entryId, w: rec.w, h: rec.h, size: rec.size, data: dataUrl });
+        return ok ? undefined : Promise.reject(new Error('quota'));
+      });
+    },
+    deleteImage: function (id) {
+      try { localStorage.removeItem(LS_PREFIX + 'img_' + id); } catch (e) {}
+      return Promise.resolve();
+    },
+    listImages: function () {
+      var out = [], keys = [];
+      try {
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (k && k.indexOf(LS_PREFIX + 'img_') === 0) keys.push(k);
+        }
+      } catch (e) {}
+      keys.forEach(function (k) {
+        try { out.push(JSON.parse(localStorage.getItem(k))); } catch (e) {}
+      });
+      return Promise.resolve(out);
+    },
+    clear: function () {
+      var keys = [];
+      try {
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (!k) continue;
+          var isProfile = (k === LS_PREFIX + 'img_cover' || k === LS_PREFIX + 'img_avatar');
+          if (!isProfile && (k.indexOf(LS_PREFIX + 'img_') === 0 || k === LS_PREFIX + 'entries')) keys.push(k);
+        }
+      } catch (e) {}
+      keys.forEach(function (k) { try { localStorage.removeItem(k); } catch (e) {} });
+      lsSet('entries', []);
+      return Promise.resolve();
+    }
+  };
+
+  return {
+    get mode() { return mode; },
+
+    init: function () {
+      return openIDB().then(function (db) {
+        idbBackend.db = db;
+        backend = idbBackend;
+        mode = 'idb';
+      }).catch(function () {
+        return localBackend.init().then(function () {
+          backend = localBackend;
+          mode = 'local';
+        }).catch(function () {
+          // 最后兜底：纯内存（本次会话有效，刷新即丢）
+          var mem = { entries: [], images: {} };
+          backend = {
+            init: function () { return Promise.resolve(); },
+            listEntries: function () { return Promise.resolve(mem.entries.slice()); },
+            putEntry: function (e) {
+              var i = mem.entries.findIndex(function (x) { return x.id === e.id; });
+              if (i >= 0) mem.entries[i] = e; else mem.entries.push(e);
+              return Promise.resolve();
+            },
+            deleteEntry: function (id) {
+              mem.entries = mem.entries.filter(function (x) { return x.id !== id; });
+              return Promise.resolve();
+            },
+            getImage: function (id) { return Promise.resolve(mem.images[id] || null); },
+            putImage: function (r) { mem.images[r.id] = r; return Promise.resolve(); },
+            deleteImage: function (id) { delete mem.images[id]; return Promise.resolve(); },
+            listImages: function () { return Promise.resolve(Object.keys(mem.images).map(function (k) { return mem.images[k]; })); },
+            clear: function () { mem.entries = []; mem.images = {}; return Promise.resolve(); }
+          };
+          mode = 'memory';
+        });
+      });
+    },
+
+    /* ---------- 日记条目 ---------- */
+    listEntries: function () {
+      return backend.listEntries().then(function (list) {
+        return (list || []).sort(function (a, b) { return b.createdAt - a.createdAt; });
+      });
+    },
+    getEntry: function (id) {
+      return backend.listEntries().then(function (list) {
+        return (list || []).filter(function (e) { return e.id === id; })[0] || null;
+      });
+    },
+    saveEntry: function (entry) { return backend.putEntry(entry); },
+    /** 删除日记：先级联删除它拥有的图片，再删除条目本身 */
+    deleteEntryCascade: function (id) {
+      return backend.listImages().then(function (imgs) {
+        var owned = (imgs || []).filter(function (r) { return r.entryId === id; });
+        return Promise.all(owned.map(function (r) {
+          if (urlCache.has(r.id)) {
+            try { URL.revokeObjectURL(urlCache.get(r.id)); } catch (e) {}
+            urlCache.delete(r.id);
+          }
+          return backend.deleteImage(r.id);
+        }));
+      }).then(function () { return backend.deleteEntry(id); });
+    },
+
+    /* ---------- 图片 ---------- */
+    putImage: function (rec) { return backend.putImage(rec); },
+    getImage: function (id) { return backend.getImage(id); },
+    /** 删除单张图片并释放它的 Blob URL */
+    deleteImage: function (id) {
+      if (urlCache.has(id)) {
+        try { URL.revokeObjectURL(urlCache.get(id)); } catch (e) {}
+        urlCache.delete(id);
+      }
+      return backend.deleteImage(id);
+    },
+    listImages: function () { return backend.listImages(); },
+    clearAll: function () { return backend.clear(); },
+
+    /* ---------- 估算占用 ---------- */
+    /**
+     * 图片字节 + 日记文字字节。
+     * 文字也要算：一篇只有文字、没有配图的日记，占用不该显示成 0。
+     * 注意 profile 图（封面/头像）在后端的 clear() 里是**故意保留**的，
+     * 所以"清空全部日记"之后这里的数字通常不会变成 0，而是回落到只剩资料图的大小。
+     */
+    usage: function () {
+      return Promise.all([backend.listImages(), backend.listEntries()]).then(function (res) {
+        var bytes = 0;
+        (res[0] || []).forEach(function (r) {
+          if (r.size) bytes += r.size;
+          else if (r.data) bytes += r.data.length * 0.75;
+          else if (r.blob) bytes += r.blob.size || 0;
+        });
+        (res[1] || []).forEach(function (e) {
+          try { bytes += JSON.stringify(e).length; } catch (err) { /* 循环引用等异常不影响进度 */ }
+        });
+        return bytes;
+      });
+    }
+  };
+})();
+
+/* ==========================================================================
+   4. 元数据层  Meta（localStorage：昵称 / 签名 / 密码哈希 / 主题）
+   ========================================================================== */
+var DEFAULT_META = {
+  nickname: '我',
+  sign: '把日子写成一行行字，只有自己看得到。',
+  pinHash: '',
+  pinSalt: '',
+  pinEnabled: false,
+  autoLockSec: 60,
+  theme: 'light',
+  showCover: true
+};
+var Meta = {
+  data: null,
+  load: function () {
+    var raw = null;
+    try { raw = JSON.parse(localStorage.getItem('wd_meta') || 'null'); } catch (e) {}
+    this.data = Object.assign({}, DEFAULT_META, raw || {});
+    return this.data;
+  },
+  save: function (patch) {
+    Object.assign(this.data, patch || {});
+    try { localStorage.setItem('wd_meta', JSON.stringify(this.data)); } catch (e) {}
+    return this.data;
+  }
+};
+
+/* ==========================================================================
+   5. 密码层  Lock
+   仅做本地校验：SHA-256( salt + pin )，无网络、无账号，忘记只能重置（清空数据）
+   ========================================================================== */
+var Lock = {
+  /* 简易同步哈希（crypto.subtle 不可用时兜底） */
+  weakHash: function (str) {
+    var h1 = 0x811c9dc5, h2 = 0x1000193;
+    for (var i = 0; i < str.length; i++) {
+      h1 = (h1 ^ str.charCodeAt(i)) * 16777619 >>> 0;
+      h2 = ((h2 << 5) - h2 + str.charCodeAt(i)) >>> 0;
+    }
+    return ('0000000' + h1.toString(16)).slice(-8) + ('0000000' + h2.toString(16)).slice(-8);
+  },
+  hash: function (pin, salt) {
+    var text = salt + ':' + pin;
+    if (window.crypto && window.crypto.subtle && window.TextEncoder) {
+      var buf = new TextEncoder().encode(text);
+      return window.crypto.subtle.digest('SHA-256', buf).then(function (dg) {
+        return Array.prototype.map.call(new Uint8Array(dg), function (b) {
+          return ('0' + b.toString(16)).slice(-2);
+        }).join('');
+      }).catch(function () { return Lock.weakHash(text); });
+    }
+    return Promise.resolve(Lock.weakHash(text));
+  },
+  makeSalt: function () {
+    if (window.crypto && window.crypto.getRandomValues) {
+      var a = new Uint8Array(8);
+      window.crypto.getRandomValues(a);
+      return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+    }
+    return uid() + uid();
+  },
+  verify: function (pin) {
+    var m = Meta.data;
+    if (!m.pinHash) return Promise.resolve(false);
+    return this.hash(pin, m.pinSalt).then(function (h) { return h === m.pinHash; });
+  },
+  setPin: function (pin) {
+    var salt = this.makeSalt();
+    var self = this;
+    return this.hash(pin, salt).then(function (h) {
+      Meta.save({ pinSalt: salt, pinHash: h, pinEnabled: true });
+    });
+  }
+};
+
+/* ==========================================================================
+   6. 应用状态与视图层
+   ========================================================================== */
+/* 图片 Blob URL 缓存：避免重复读库、避免重复创建 */
+var urlCache = new Map();
+function imageURL(id) {
+  if (!id) return Promise.resolve('');
+  if (urlCache.has(id)) return Promise.resolve(urlCache.get(id));
+  return Store.getImage(id).then(function (rec) {
+    if (!rec || !rec.blob) return '';
+    var url = URL.createObjectURL(rec.blob);
+    rec._url = url;
+    urlCache.set(id, url);
+    return url;
+  });
+}
+/** 渲染后异步填充图片 src（先出占位底色，再填内容，避免整页等待） */
+function hydrateImages(root) {
+  $$('img[data-img]', root).forEach(function (img) {
+    if (img.dataset.hydrated) return;
+    img.dataset.hydrated = '1';
+    imageURL(img.getAttribute('data-img')).then(function (url) {
+      if (url && img.isConnected) {
+        img.src = url;
+        img.style.display = 'block';   // 解出图后才显示，避免破图占位
+      }
+    });
+  });
+}
+
+var State = {
+  entries: [],
+  tab: 'home',
+  /**
+   * 当前标签是怎么进来的：'tile'（首页桌面磁贴）/ 'tab'（底部标签栏）。
+   * 用途只有一个 —— 决定左上角要不要显示「返回首页」：
+   * 从磁贴跳进来的（相当于进了一个下级页）需要一个明确的回头路；
+   * 从底部栏切过来的本来就在底部栏里，再给个返回键是多余的。
+   */
+  tabVia: 'tab',
+  editingId: null,
+  draftImages: [],      // [{id, blob, w, h, url}]
+  textOnly: false,      // 本次发布只写文字（长按时间线相机进来的），不显示配图入口
+  viewerList: [],
+  viewerIndex: 0,
+  /**
+   * 查看器的缩放状态（当前倍数 + 归位函数）。
+   * 放在全局 State 上而不是 bindEvents 的闭包里，是因为有两个外部需要用到：
+   *   · moveViewer 翻页时要把目标图片的缩放归位
+   *   · 旋转屏幕时要按新视口重算平移量
+   * 两者都定义在 bindEvents 之外，够不到闭包里的变量。
+   */
+  viewerZoom: 1,
+  viewerReset: null,
+  galleryList: [],      // 相册/查看器当前的图片 id 序列（全局索引）
+  actionEntryId: null,
+  lockMode: 'verify',   // verify | setup | confirm
+  lockSource: 'verify', // verify | first（首次设置密码）| change（修改密码）
+  lockOnSuccess: null,  // 验证通过后的动作，目前用于「验证后开启密码验证」
+  pinBuffer: '',
+  tempPin: '',
+  hiddenAt: 0
+};
+
+/* ---------------- 主容器：标签切换 ---------------- */
+var TAB_PANES = { home: '#screen-home', timeline: '#screen-timeline', gallery: '#screen-gallery', mine: '#screen-settings' };
+/**
+ * 切换标签。
+ * @param name 'home' | 'timeline' | 'gallery' | 'mine'
+ * @param via  可选。'tile' = 从首页磁贴进来（显示「返回首页」）；
+ *             'tab' = 从底部标签栏进来（不显示）。不传就保持现状 ——
+ *             这样「时间线 → 点齿轮进设置」这类站内跳转不会把来源弄丢。
+ */
+function switchTab(name, via) {
+  if (!TAB_PANES[name]) name = 'home';
+  State.tab = name;
+  if (via) State.tabVia = via === 'tile' ? 'tile' : 'tab';
+  Object.keys(TAB_PANES).forEach(function (k) {
+    var el = $(TAB_PANES[k]);
+    if (el) el.classList.toggle('active', k === name);
+  });
+  $$('#tabbar .tab').forEach(function (b) {
+    b.classList.toggle('on', b.getAttribute('data-tab') === name);
+  });
+  if (name === 'home') renderDesktop();
+  if (name === 'gallery') renderGallery();
+  if (name === 'mine') renderSettings();
+  // 时间线刚变可见时才量得出正文行数（隐藏状态下 getClientRects 是空的）。
+  // boot 里的 renderTimeline 跑在切换标签之前，所以这次补测是必须的，不是兜底。
+  if (name === 'timeline') syncPostFold($('#timeline'));
+  var sc = $(TAB_PANES[name] + ' .scroll');
+  if (sc) sc.scrollTop = 0;
+  syncTabBack();
+}
+
+/**
+ * 「返回首页」的显隐。
+ * 首页自己不需要（本来就是首页）；从底部栏进来的也不需要。
+ * 用 hidden 属性而不是改 style.display：.nav-btn 自带 display:flex，
+ * 得靠 CSS 里那条 `.nav-btn[hidden]{display:none}` 才压得住。
+ */
+function syncTabBack() {
+  var show = State.tab !== 'home' && State.tabVia === 'tile';
+  $$('[data-back-home]').forEach(function (b) { b.hidden = !show; });
+}
+
+/* ---------------- 首页渲染 ---------------- */
+function renderProfile() {
+  var m = Meta.data;
+  $('#meName').textContent = m.nickname || '我';
+  $('#meSign').textContent = m.sign || '';
+  $('#setNickname').value = m.nickname || '';
+  $('#setSign').value = m.sign || '';
+  /**
+   * 密码区的两个"行标题"，只看**开关**（pinEnabled）。
+   * 用户的原话：「未打开密码时显示"打开密码"，打开之后显示"修改密码"；
+   * "关闭密码"也要在打开密码后才显示，关闭之后就没有」。
+   *
+   * 所以把"设过密码但开关关着"（pinHash 有值、pinEnabled=false）也算作"没打开"：
+   * 那种状态下不摆"修改密码"，而是给「打开密码」—— 点一下输一次原密码就开回来。
+   */
+  var pinOn = !!(m.pinEnabled && m.pinHash);
+  $('#pinRowLabel').textContent = pinOn ? '修改密码' : '打开密码';
+  $('#pinStateText').textContent = pinOn ? '已设置' : '未设置';
+  $('#switchLock').classList.toggle('on', pinOn);
+  // 开关旁边补一句大白话：一眼知道"现在到底是谁在管着打开的动作"。
+  // 尤其"关掉了但密码还留着"这种状态，不写清就会让人以为没关掉。
+  $('#pinSwitchHint').textContent = pinOn ? '已开启'
+    : (m.pinHash ? '已关闭（密码保留，可再开启）' : '');
+  /**
+   * 「关闭密码」是一个**独立入口行**，跟着开关走：**只有密码打开着才出现**。
+   *
+   * 参照微信：「账号与安全 → 声音锁」这类开关页，开着的时候下面才有那条
+   * 「关闭/停用」——拨灰只是"暂停使用"，那条行才是"真的把它关掉"。
+   *
+   * 没打开时整行隐藏：既没有可关的东西，也不该在"打开密码"旁边摆一个"关闭密码"
+   * 让人以为哪里对不上。
+   */
+  $('#setClosePin').hidden = !pinOn;
+  $('#switchTheme').classList.toggle('on', m.theme === 'dark');
+  $('#switchCover').classList.toggle('on', m.showCover !== false);
+  $('#setAutoLock').textContent = (m.autoLockSec >= 60 ? (m.autoLockSec / 60) + ' 分钟' : m.autoLockSec + ' 秒');
+  $('#storageNote').textContent = '存储方式：' + ({
+    idb: 'IndexedDB 本地数据库（推荐，可存大量图片）',
+    local: 'localStorage 降级模式（容量约 5MB，建议尽快换浏览器打开）',
+    memory: '内存临时模式（本次会话有效，刷新即丢失）'
+  }[Store.mode] || Store.mode);
+
+  // 头像
+  var av = $('#meAvatar');
+  var letter = (m.nickname || '我').slice(0, 1);
+  av.innerHTML = '<img id="avatarImg" alt="" style="display:none"><span class="avatar-letter" id="avatarLetter">' +
+    escapeHtml(letter) + '</span>';
+  imageURL('avatar').then(function (url) {
+    if (url) { $('#avatarImg').src = url; $('#avatarImg').style.display = 'block'; $('#avatarLetter').style.display = 'none'; }
+  });
+  // 封面
+  imageURL('cover').then(function (url) {
+    var c = $('#coverImg');
+    if (url) { c.src = url; c.style.display = 'block'; }
+  });
+}
+
+function postAvatarHtml() {
+  var m = Meta.data;
+  var letter = (m.nickname || '我').slice(0, 1);
+  // 头像是全局共用的，单独异步填充（有图显图，无图显首字）
+  return '<div class="post-avatar"><img class="post-avatar-img" alt="" style="display:none">' +
+    '<span class="avatar-letter">' + escapeHtml(letter) + '</span></div>';
+}
+/** 为所有日记卡片填充同一张头像 */
+function hydrateAvatars(root) {
+  var imgs = $$('.post-avatar .post-avatar-img', root);
+  if (!imgs.length) return;
+  imageURL('avatar').then(function (url) {
+    if (!url) return;
+    imgs.forEach(function (im) {
+      if (!im.isConnected) return;
+      im.src = url;
+      im.style.display = 'block';
+      var letter = im.parentNode.querySelector('.avatar-letter');
+      if (letter) letter.style.display = 'none';
+    });
+  });
+}
+
+function gridClass(n) {
+  if (n === 1) return 'pgrid n1';
+  if (n === 2) return 'pgrid n2';
+  if (n === 4) return 'pgrid n4';
+  return 'pgrid n' + Math.min(n, 9);
+}
+
+/** 时间线里正文默认最多显示几行，超出的折起来由「更多」展开 */
+var POST_FOLD_LINES = 6;
+// 把行数同步给 CSS：折叠靠 -webkit-line-clamp，它只认 CSS 值，读不到 JS 常量。
+// 写进 :root 后两边只有一个真值来源，改 POST_FOLD_LINES 就够了。
+document.documentElement.style.setProperty('--post-fold-lines', POST_FOLD_LINES);
+
+/**
+ * 封面基础高度，必须与 .cover 的 CSS height 一致。
+ * 下拉放大时的 scale 系数就是按它算的（(BASE+d)/BASE），改一处必须改另一处。
+ */
+var COVER_BASE_H = 250;
+
+function renderTimeline() {
+  var wrap = $('#timeline');
+  var list = State.entries;
+
+  $('#meStat').textContent = list.length
+    ? ('共 ' + list.length + ' 篇日记' + (list[0] ? ' · 最近更新 ' + TimeFmt.rel(list[0].createdAt) : ''))
+    : '还没有日记';
+
+  if (!list.length) {
+    wrap.innerHTML =
+      '<div class="empty">' +
+        '<svg width="96" height="96" viewBox="0 0 96 96" fill="none">' +
+          '<rect x="18" y="12" width="60" height="72" rx="8" stroke="var(--line)" stroke-width="2"/>' +
+          '<rect x="27" y="6" width="42" height="14" rx="4" fill="var(--fill)" stroke="var(--line)" stroke-width="2"/>' +
+          '<path d="M30 36h36M30 48h36M30 60h22" stroke="var(--line)" stroke-width="2.6" stroke-linecap="round"/>' +
+        '</svg>' +
+        '<h3>还没有任何记录</h3>' +
+        '<p>点击右上角相机按钮<br>写下第一篇只属于你的日记</p>' +
+      '</div>' +
+      '<div class="empty-hint"><b>说明：</b>这里没有点赞、没有评论、没有好友，所有内容仅保存在本机浏览器，仅你自己可见。</div>';
+    return;
+  }
+
+  var html = '';
+  var lastYear = null;
+  list.forEach(function (e) {
+    var d = new Date(e.createdAt);
+    if (d.getFullYear() !== lastYear) {
+      lastYear = d.getFullYear();
+      html += '<div class="year-divider">' + lastYear + '年</div>';
+    }
+    var imgs = e.images || [];
+    var gridHtml = '';
+    if (imgs.length) {
+      gridHtml = '<div class="' + gridClass(imgs.length) + '">' + imgs.map(function (iid, i) {
+        var ratio = (e._ratios && e._ratios[i]) || '1';
+        var single = imgs.length === 1 && e._ratios && e._ratios[0];
+        return '<a class="ph" href="javascript:;" data-view="' + e.id + '" data-index="' + i + '"' +
+          (single ? ' style="aspect-ratio:' + ratio + '"' : '') + '>' +
+          '<img data-img="' + iid + '" alt=""></a>';
+      }).join('') + '</div>';
+    }
+
+    // 正文：按原文换行显示。
+    // ⚠️ 折叠与否**不能**在渲染时靠数 \n 决定（见 syncPostFold）：数出来的是逻辑行，
+    //    而 CSS 的 -webkit-line-clamp 数的是**视觉行**（长段落会自动折行，两者能差好几倍）。
+    //    这里先把全文以展开态铺出去，等整批插入 DOM 后由 syncPostFold() 量真实行数再折。
+    var textHtml = '';
+    if (e.text) {
+      textHtml = '<div class="post-text" data-text-id="' + e.id + '">' +
+        TextFmt.toHtml(e.text) + '</div>';
+    }
+
+    html +=
+      '<article class="post" data-id="' + e.id + '">' +
+        postAvatarHtml() +
+        '<div class="post-main">' +
+          '<div class="post-name">' + escapeHtml(Meta.data.nickname || '我') + '</div>' +
+          textHtml +
+          gridHtml +
+          '<div class="post-foot">' +
+            '<span class="post-time" title="' + TimeFmt.full(e.createdAt) + '">' +
+              TimeFmt.rel(e.createdAt) + (e.updatedAt ? '（已编辑）' : '') + '</span>' +
+            '<span class="post-lock">' +
+              '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">' +
+                '<rect x="4" y="10.5" width="16" height="10.5" rx="2.6"/><path d="M8 10.5V7.6a4 4 0 0 1 8 0v2.9"/></svg>' +
+              '<span style="font-size:11.5px;margin-left:3px">仅自己可见</span>' +
+            '</span>' +
+            '<button class="post-more" data-more="' + e.id + '" aria-label="更多"><i class="dot"></i><i class="dot"></i><i class="dot"></i></button>' +
+          '</div>' +
+        '</div>' +
+      '</article>';
+  });
+  wrap.innerHTML = html + '<div class="tl-end">—— 已经到底了 ——</div>';
+  hydrateImages(wrap);
+  hydrateAvatars(wrap);
+  syncPostFold(wrap);
+}
+
+/**
+ * 给一批已插入 DOM 的日记正文量出**真实视觉行数**，决定要不要折、折掉几行。
+ *
+ * 为什么必须量而不能算：
+ *   `TextFmt.fold` 数的是 \n 个数（逻辑行），而 CSS 的 `-webkit-line-clamp`
+ *   数的是**视觉行** —— 一段 200 字没换行的文字，逻辑行是 1，在手机上却折成十几行。
+ *   靠数 \n 判定会同时错两头：
+ *     · 「还有 N 行」的数字严重偏小（写成 1 行，实际藏了 10 行）
+ *     · 更糟：逻辑行 ≤ 6 但视觉行 > 6 时**不生成「更多」按钮**，
+ *       CSS 却把正文裁到第 6 行 —— 用户看到内容被截断，却没有任何办法展开（踩过）
+ *
+ * 做法：正文先以展开态渲染（见 renderTimeline），这里量完再折、再决定按钮，
+ * 同一帧内完成，用户看不到中间态。
+ *
+ * ⚠️ 隐藏状态下（display:none）量不到任何 rect，会误判成"没超出"。
+ *    而 renderTimeline 在 boot 里是在时间线面板**还没显示**时就被调用的，
+ *    所以这里用"宽度+字数"当签名：面板变可见或宽度变化（旋转/改字号）时重跑一次。
+ */
+function syncPostFold(root) {
+  var w = (root || document).clientWidth || window.innerWidth;
+  $$('.post-text', root).forEach(function (body) {
+    // 用户手动展开过的保持展开 —— 重量一次就把它折回去会很突兀
+    if (body.classList.contains('expanded')) { body.dataset.foldSig = ''; return; }
+    var text = body.textContent || '';
+    var sig = w + ':' + text.length;
+    if (body.dataset.foldSig === sig) return;     // 尺寸和内容都没变，不必重量
+    // 重置到展开态再量，否则会拿上一次折叠后的行数当总量
+    body.classList.remove('folded', 'expanded');
+    var btn = body.nextElementSibling;
+    if (btn && btn.classList.contains('post-moretext')) btn.remove();
+    body.dataset.foldSig = sig;
+
+    var all = countClientLines(body);
+    if (all <= POST_FOLD_LINES) return;          // 没超出，保持展开、不加按钮
+
+    // 先折起来，再量折叠态实际露出的行数。
+    // 不能直接用 POST_FOLD_LINES：line-clamp 取的是"若干个行盒"，
+    // 如果第 7 行的起点正好落在一个显式换行之后，实际露出的是 7 行而不是 6 行。
+    body.classList.add('folded');
+    var shown = countClientLines(body);
+    var hidden = Math.max(all - shown, 1);
+
+    // 按钮按真实多出来的行数生成，而不是预先在 HTML 里拼好
+    var b = document.createElement('button');
+    b.className = 'post-moretext';
+    b.setAttribute('data-expand', body.getAttribute('data-text-id') || '');
+    b.setAttribute('data-hidden', String(hidden));
+    b.innerHTML = '更多<span>（还有 ' + hidden + ' 行）</span>';
+    body.parentNode.insertBefore(b, body.nextSibling);
+  });
+}
+
+/**
+ * 数一个元素的视觉行数。
+ *
+ * 分两种情形，因为它们要用的 API 不同 —— 这一点很反直觉，实测过才敢写：
+ *
+ * ① **未折叠**：用 `Range.getClientRects()`。
+ *    ⚠️ 不能对块级元素调 `el.getClientRects()`：那返回的是元素自身那**一个**盒子
+ *    （实测 222 字整段只返回 1 个矩形），会让行数恒为 1、"1 <= 6"判定成没超出，
+ *    于是所有长文既不折叠也不给「更多」（踩过）。
+ *
+ * ② **已折叠（-webkit-line-clamp 生效）**：用 `元素高度 / 行高`。
+ *    ⚠️ 此时 **Range 不遵守 clamp**：实测折叠后元素高 144px（正好 6 行），
+ *    但 Range 仍返回全部 12 行的矩形 —— 拿它当"露出的行数"会得到 12，
+ *    于是"隐藏行数 = 12 - 12 = 0"，用户永远看到「还有 1 行」（踩过）。
+ *    元素高度是遵守 clamp 的（144 / 24 = 6），所以这一路要用高度算。
+ */
+function countClientLines(el) {
+  if (!el || !el.firstChild) return 0;
+  var folded = el.classList && el.classList.contains('folded');
+  if (folded) {
+    var lh = parseFloat(getComputedStyle(el).lineHeight);
+    if (!lh || isNaN(lh)) return 0;
+    return Math.max(1, Math.round(el.getBoundingClientRect().height / lh));
+  }
+  var range = document.createRange();
+  range.selectNodeContents(el);
+  var rects = range.getClientRects();
+  var tops = 0, last = null;
+  for (var i = 0; i < rects.length; i++) {
+    if (rects[i].width === 0 && rects[i].height === 0) continue;
+    var t = Math.round(rects[i].top);
+    if (last === null || t > last) { tops++; last = t; }
+  }
+  range.detach && range.detach();
+  return tops;
+}
+
+/**
+ * 「更多」的展开 / 收起。
+ * 折叠由 CSS class 控制：
+ *   .post-text.folded   → 限制到 POST_FOLD_LINES 行，末尾加渐隐
+ *   .post-text.expanded → 完整显示
+ * 行数由 syncPostFold 量出真实视觉行数后写进按钮的 data-hidden，点开时直接用。
+ */
+function togglePostText(btn) {
+  var post = btn.closest('.post');
+  if (!post) return;
+  var body = post.querySelector('.post-text');
+  if (!body) return;
+  var hidden = btn.getAttribute('data-hidden') || '0';
+  var expanded = body.classList.toggle('expanded');
+  body.classList.toggle('folded', !expanded);
+  btn.classList.toggle('on', expanded);
+  btn.innerHTML = expanded ? '收起' : ('更多<span>（还有 ' + hidden + ' 行）</span>');
+}
+
+/** 给列表补上图片宽高比（用于单图自适应），在渲染后异步获取 */
+function decorateRatios() {
+  var need = State.entries.filter(function (e) { return e.images && e.images.length === 1 && !e._ratios; });
+  if (!need.length) return Promise.resolve();
+  return Promise.all(need.map(function (e) {
+    return Store.getImage(e.images[0]).then(function (rec) {
+      if (rec && rec.w && rec.h) e._ratios = [rec.w + '/' + rec.h];
+    });
+  }));
+}
+
+/* ---------------- 首页数据加载 ---------------- */
+function loadHome() {
+  return Store.listEntries().then(function (list) {
+    State.entries = list;
+    return decorateRatios();
+  }).then(function () {
+    renderProfile();
+    renderTimeline();
+    renderDesktop();
+    renderCoverMeta();
+    if (State.tab === 'gallery') renderGallery();
+  });
+}
+
+/* ==========================================================================
+   派生数据：统计口径集中在这里，首页 / 统计页 / 封面页共用
+   ========================================================================== */
+function totalImageCount() {
+  return State.entries.reduce(function (n, e) { return n + (e.images ? e.images.length : 0); }, 0);
+}
+/** 连续记录天数：从最近一篇所在的那天起往前数，连续有记录的天数 */
+function streakDays() {
+  if (!State.entries.length) return 0;
+  var days = {};
+  State.entries.forEach(function (e) {
+    var d = new Date(e.createdAt);
+    days[d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate()] = 1;
+  });
+  var cursor = new Date(State.entries[0].createdAt);
+  cursor.setHours(0, 0, 0, 0);
+  var n = 0;
+  while (days[cursor.getFullYear() + '/' + (cursor.getMonth() + 1) + '/' + cursor.getDate()]) {
+    n++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return n;
+}
+function greetWord() {
+  var h = new Date().getHours();
+  if (h < 6) return '夜深了';
+  if (h < 11) return '早上好';
+  if (h < 14) return '中午好';
+  if (h < 18) return '下午好';
+  return '晚上好';
+}
+var WEEK = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+
+/* ---------------- 封面页 ---------------- */
+function renderCoverMeta() {
+  var n = State.entries.length;
+  $('#coverCount').textContent = n;
+  $('#coverLast').textContent = n ? TimeFmt.rel(State.entries[0].createdAt) : '暂无';
+}
+/** 封面停留时长：够看清文字，又不至于让人觉得卡住 */
+var COVER_HOLD_MS = 1800;
+var coverTimer = null, coverEntered = false;
+function showCover() {
+  renderCoverMeta();
+  coverEntered = false;
+  $('#screen-cover').classList.add('show');
+  $('#coverProgress').classList.remove('run');
+  // 重启动画：先移除 class 并强制回流，否则连着进两次不会重新播
+  void $('#coverProgress').offsetWidth;
+  $('#coverProgress').classList.add('run');
+  // 停一下就自动进入，不需要用户点任何东西
+  clearTimeout(coverTimer);
+  // 自动化测试要能"停在封面上"逐项断言，所以给一个可关闭的开关（生产环境不会用到）
+  if (window.__diaryNoAutoCover) return;
+  coverTimer = setTimeout(enterApp, COVER_HOLD_MS);
+}
+/** 离开封面：淡出后决定去锁屏还是直接进首页（可被点击/按键提前触发，重复调用无副作用） */
+function enterApp() {
+  if (coverEntered) return;
+  coverEntered = true;
+  clearTimeout(coverTimer);
+  var el = $('#screen-cover');
+  el.classList.add('leaving');
+  setTimeout(function () {
+    el.classList.remove('show', 'leaving');
+    afterCover();
+  }, 450);
+}
+
+/* ---------------- 首页 ---------------- */
+function renderDesktop() {
+  var list = State.entries;
+  var now = new Date();
+  $('#deskDate').textContent = (now.getMonth() + 1) + '月' + now.getDate() + '日 · ' + WEEK[now.getDay()];
+  $('#deskGreet').textContent = greetWord() + '，' + (Meta.data.nickname || '我');
+  $('#deskSub').textContent = list.length
+    ? ('已记录 ' + list.length + ' 篇 · 连续记录 ' + streakDays() + ' 天 · 最近更新 ' + TimeFmt.rel(list[0].createdAt))
+    : '还没有记录，从今天开始吧。';
+
+  var badge = function (sel, n) {
+    var el = $(sel);
+    el.textContent = n;
+    el.setAttribute('data-zero', n > 0 ? '0' : '1');
+  };
+  badge('#badgeTimeline', list.length);
+  badge('#badgeGallery', totalImageCount());
+
+  var wrap = $('#deskRecent');
+  if (!list.length) {
+    wrap.innerHTML = '<div class="dr-head">最近记录</div><div class="dr-empty">这里会显示你最新写下的那篇日记。</div>';
+    return;
+  }
+  var e = list[0];
+  var imgs = e.images || [];
+  // 首页「最近记录」只放一段摘要：把换行压成空格压成一行，是刻意的（那是预览不是正文）
+  var excerpt = e.text ? TextFmt.normalize(e.text).replace(/\n+/g, ' ').trim() : '（只有图片）';
+  wrap.innerHTML =
+    '<div class="dr-head">最近记录<button id="drMore">查看全部</button></div>' +
+    '<div class="dr-body">' +
+      (imgs.length ? '<div class="dr-thumb"><img data-img="' + imgs[0] + '" alt=""></div>' : '') +
+      '<div class="dr-text">' +
+        '<div class="dr-excerpt">' + escapeHtml(excerpt) + '</div>' +
+        '<div class="dr-meta">' + TimeFmt.rel(e.createdAt) +
+          (imgs.length ? ' · ' + imgs.length + ' 张图片' : '') + ' · 仅自己可见</div>' +
+      '</div>' +
+    '</div>';
+  hydrateImages(wrap);
+  var more = $('#drMore');
+  if (more) more.addEventListener('click', function () { gotoPost(e.id); });
+}
+
+/* ---------------- 相册 ---------------- */
+function renderGallery() {
+  var inner = $('#galInner');
+  var items = [];   // 按时间倒序的全局图片序列
+  State.entries.forEach(function (e) {
+    (e.images || []).forEach(function (iid) { items.push({ id: iid, entryId: e.id, at: e.createdAt }); });
+  });
+  State.galleryList = items.map(function (x) { return x.id; });
+
+  if (!items.length) {
+    inner.innerHTML = '<div class="search-tip">还没有图片。<br>写日记时附上照片，会按月份汇总到这里。</div>';
+    return;
+  }
+  var groups = {};
+  var order = [];
+  items.forEach(function (it) {
+    var d = new Date(it.at);
+    var key = d.getFullYear() + '年' + (d.getMonth() + 1) + '月';
+    if (!groups[key]) { groups[key] = []; order.push(key); }
+    groups[key].push(it);
+  });
+  inner.innerHTML =
+    '<div class="pane-head"><span>共 ' + items.length + ' 张 · ' + order.length + ' 个月份</span></div>' +
+    order.map(function (k) {
+      return '<div class="gal-month"><div class="gal-month-title">' + k + '（' + groups[k].length + ' 张）</div>' +
+        '<div class="gal-grid">' + groups[k].map(function (it) {
+          var i = State.galleryList.indexOf(it.id);
+          return '<a href="javascript:;" data-gidx="' + i + '">' +
+            '<img data-img="' + it.id + '" alt=""></a>';
+        }).join('') + '</div></div>';
+    }).join('');
+  hydrateImages(inner);
+}
+
+/* ---------------- 搜索 ---------------- */
+function openSearch() {
+  showScreen('#screen-search');
+  setTimeout(function () { $('#searchInput').focus(); }, 320);
+}
+function renderSearch() {
+  var q = $('#searchInput').value.trim();
+  var box = $('#searchResults');
+  $('#btnSearchClear').hidden = !q;
+  if (!q) {
+    box.innerHTML = '<div class="search-tip">输入关键词，搜索所有日记正文。<br>搜索只在本机进行，不会联网。</div>';
+    return;
+  }
+  var lower = q.toLowerCase();
+  var hits = State.entries.filter(function (e) {
+    return (e.text || '').toLowerCase().indexOf(lower) >= 0;
+  });
+  if (!hits.length) {
+    box.innerHTML = '<div class="search-tip">没有找到包含「' + escapeHtml(q) + '」的日记。</div>';
+    return;
+  }
+  box.innerHTML = hits.map(function (e) {
+    var text = e.text || '';
+    var idx = text.toLowerCase().indexOf(lower);
+    var start = Math.max(0, idx - 26);
+    var seg = (start > 0 ? '…' : '') + text.slice(start, idx + q.length + 46) + (text.length > idx + q.length + 46 ? '…' : '');
+    var safe = escapeHtml(seg).replace(new RegExp(escapeReg(q), 'gi'), function (m) { return '<mark>' + m + '</mark>'; });
+    return '<div class="search-hit" data-jump="' + e.id + '">' +
+      '<div class="sh-text">' + safe + '</div>' +
+      '<div class="sh-meta">' + TimeFmt.full(e.createdAt) +
+        (e.images && e.images.length ? ' · ' + e.images.length + ' 张图片' : '') + '</div>' +
+      '</div>';
+  }).join('');
+}
+function escapeReg(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+/** 跳转到某篇日记：切到时间线并闪烁高亮 */
+function gotoPost(id) {
+  hideScreen('#screen-search');
+  switchTab('timeline');
+  setTimeout(function () {
+    var el = $('.post[data-id="' + id + '"]');
+    if (!el) return;
+    var sc = $('#homeScroll');
+    var top = el.offsetTop - 12;
+    if (sc.scrollTo) sc.scrollTo({ top: top, behavior: 'smooth' });
+    else sc.scrollTop = top;
+    el.classList.add('hl');
+    setTimeout(function () { el.classList.remove('hl'); }, 1900);
+  }, 120);
+}
+
+/* ---------------- 统计 ---------------- */
+/**
+ * 生成一行统计。左边是名目、右边是数值 —— 用户要的就是这个左右结构，
+ * 之前只有右侧数值、没有左侧名目，看不出这行到底是什么。
+ */
+function statRow(label, value, unit, rawText) {
+  var right = rawText ? escapeHtml(String(value))
+    : escapeHtml(String(value)) + (unit ? '<i>' + escapeHtml(unit) + '</i>' : '');
+  return '<div class="stat-row"><span class="sr-label">' + escapeHtml(label) + '</span>' +
+    '<b class="sr-value">' + right + '</b></div>';
+}
+function renderStats() {
+  var list = State.entries;
+  var chars = list.reduce(function (n, e) { return n + (e.text ? e.text.length : 0); }, 0);
+  var imgs = totalImageCount();
+  var now = new Date();
+  var year = now.getFullYear();
+  var months = new Array(12).fill(0);
+  list.forEach(function (e) {
+    var d = new Date(e.createdAt);
+    if (d.getFullYear() === year) months[d.getMonth()]++;
+  });
+  var max = Math.max.apply(null, months.concat([1]));
+  var thisMonth = months[now.getMonth()];
+  var days = {};
+  list.forEach(function (e) { var d = new Date(e.createdAt); days[d.toDateString()] = 1; });
+
+  // 今天 / 本周（按周一开头算）
+  var todayKey = now.toDateString();
+  var weekStart = new Date(now);
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+  var todayCount = 0, weekCount = 0;
+  list.forEach(function (e) {
+    var d = new Date(e.createdAt);
+    if (d.toDateString() === todayKey) todayCount++;
+    if (d.getTime() >= weekStart.getTime()) weekCount++;
+  });
+
+  // 第一篇 / 最近一篇 / 跨度（有记录起算，至少 1 天）
+  var firstAt = list.length ? list[list.length - 1].createdAt : 0;
+  var lastAt = list.length ? list[0].createdAt : 0;
+  var spanDays = list.length
+    ? Math.max(1, Math.round((startOfDay(lastAt) - startOfDay(firstAt)) / 86400000) + 1)
+    : 0;
+
+  $('#statInner').innerHTML =
+    '<div class="stat-cards">' +
+      '<div class="stat-card"><div class="stat-num">' + list.length + '<small>篇</small></div><div class="stat-cap">日记总数</div></div>' +
+      '<div class="stat-card"><div class="stat-num">' + imgs + '<small>张</small></div><div class="stat-cap">图片总数</div></div>' +
+      '<div class="stat-card"><div class="stat-num">' + streakDays() + '<small>天</small></div><div class="stat-cap">连续记录</div></div>' +
+    '</div>' +
+    '<div class="chart-card">' +
+      '<div class="chart-title">' + year + ' 年月度分布<span>最高 ' + max + ' 篇</span></div>' +
+      '<div class="bars">' + months.map(function (n, i) {
+        var h = Math.round(n / max * 100);
+        return '<div class="bar-col">' +
+          '<div class="bar-num">' + (n || '') + '</div>' +
+          '<div class="bar' + (n ? ' has' : '') + '" style="height:' + Math.max(h, 2) + '%"></div>' +
+          '<div class="bar-cap">' + (i + 1) + '</div>' +
+        '</div>';
+      }).join('') + '</div>' +
+    '</div>' +
+    '<div class="stat-rows">' +
+      statRow('记录天数', Object.keys(days).length, '天') +
+      statRow('本月记录', thisMonth, '篇') +
+      statRow('今天记录', todayCount, '篇') +
+      statRow('本周记录', weekCount, '篇') +
+      statRow('日记总数', list.length, '篇') +
+      statRow('图片总数', imgs, '张') +
+      statRow('累计字数', chars, '字') +
+      statRow('平均每篇', (list.length ? Math.round(chars / list.length) : 0), '字') +
+      statRow('连续记录', streakDays(), '天') +
+      statRow('累计记录时长', spanDays, '天') +
+      statRow('第一篇写于', firstAt ? TimeFmt.full(firstAt) : '—', '', true) +
+      statRow('最近一篇', lastAt ? TimeFmt.rel(lastAt) : '—', '', true) +
+    '</div>' +
+    '<div class="stat-note">统计只在本机计算，不会上传任何数据。</div>';
+}
+
+/* ---------------- 图片查看器 ---------------- */
+/** 按给定的图片 id 序列打开查看器（相册会传入全局序列） */
+function openViewerByIds(ids, index) {
+  if (!ids || !ids.length) return;
+  State.viewerList = ids.slice();
+  State.viewerIndex = Math.max(0, Math.min(index, ids.length - 1));
+  var track = $('#viewerTrack');
+  track.innerHTML = State.viewerList.map(function (iid) {
+    return '<div class="slide"><img data-img="' + iid + '" alt=""></div>';
+  }).join('');
+  hydrateImages(track);
+  // 每次打开都先彻底归位：vScale 等变量活在本闭包里，关掉再打开不会自动复原
+  if (State.viewerReset) State.viewerReset(State.viewerIndex);
+  $('#viewer').classList.add('show');
+  moveViewer(State.viewerIndex, true);
+  updateViewerCount();
+}
+function openViewer(entryId, index) {
+  var e = State.entries.filter(function (x) { return x.id === entryId; })[0];
+  if (!e || !e.images || !e.images.length) return;
+  openViewerByIds(e.images, index);
+}
+/**
+ * 打开「头像 / 背景图」的大图。
+ * 这两张图不属于任何日记，是全局共用的（entryId 是 __profile__ / cover），
+ * 所以单独开一条通道 —— 之前点它们完全没反应，就是因为只给日记配图接了查看器。
+ */
+function openProfileImage(kind) {
+  imageURL(kind).then(function (url) {
+    if (!url) {
+      toast(kind === 'cover' ? '还没有设置背景图，点右上角「更换封面」即可添加' : '还没有设置头像，在「我的」里可以添加');
+      return;
+    }
+    // 头像 / 背景不属于任何日记，单独作为一张图打开（查看器只认图片 id，与日记无关）
+    State.viewerList = [kind];
+    State.viewerIndex = 0;
+    var track = $('#viewerTrack');
+    track.innerHTML = '<div class="slide"><img data-img="' + kind + '" alt=""></div>';
+    hydrateImages(track);
+    $('#viewer').classList.add('show');
+    moveViewer(0, true);
+    updateViewerCount();
+  });
+}
+
+/**
+ * 下拉手势（微信朋友圈同款）：在时间线顶部继续往下拖时
+ *   ① 整块内容跟手下移  ② 封面同步**放大**，填满下拉露出的那块空白
+ * 松手后两者一起弹回原位。
+ * 要点：
+ *   · 只在 scrollTop === 0 时接管，否则会和正常滚动打架
+ *   · 全程 passive，不 preventDefault、不动 scrollTop —— 那会和原生滚动冲突
+ *   · 只用 transform（走合成层、不触发布局），所以下拉时不会重排整条时间线
+ */
+function bindPullToTop(sc) {
+  if (!sc) return;
+  // 位移加在「内容层」上，不是加在滚动区上 ——
+  // 移动滚动区会把它的上边缘一起带下去、在顶部露出背景色（踩过这个坑）
+  var pull = $('#tlPull');
+  if (!pull) return;
+  var COVER_BASE = COVER_BASE_H;   // 放大系数按封面基础高度算（见该常量的注释）
+  var MAX = 96;           // 最多跟手下拉这么多像素
+  var TRIGGER = 46;       // 超过这个距离松手才算一次"有效下拉"
+  var startY = 0, pulling = false, delta = 0, applied = false;
+  var cover = null;
+
+  function coverEl() {
+    // 每次都现取：屏可能被重建，缓存下来的引用会失效
+    if (!cover || !cover.parentNode) cover = $('#screen-timeline .cover');
+    return cover;
+  }
+
+  /** 跟手：d 是阻尼之后的位移量 */
+  function applyPull(d) {
+    pull.style.transition = '';
+    pull.style.transform = 'translateY(' + d.toFixed(1) + 'px)';
+    var c = coverEl();
+    if (c) {
+      c.style.transition = '';
+      // 整块下移 d 后，顶部会露出 d 高的空白。让封面反向位移 -d，上边缘就回到 0，
+      // 再放大到 (BASE+d)/BASE，下边缘正好落在「原位 + d」—— 空白被严丝合缝填满，
+      // 视觉上就是封面被拉大了。左右多出来的部分由 .scroll 的 overflow-x:hidden 裁掉。
+      var k = (COVER_BASE + d) / COVER_BASE;
+      c.style.transform = 'translateY(' + (-d).toFixed(1) + 'px) scale(' + k.toFixed(4) + ')';
+    }
+    applied = true;
+  }
+
+  /** 归位：animate=true 带弹回过渡，false 立刻清干净 */
+  function reset(animate) {
+    var c = coverEl();
+    if (animate) {
+      pull.classList.add('springing');
+      if (c) c.classList.add('springing');
+    }
+    pull.style.transform = 'translateY(0)';
+    if (c) c.style.transform = 'translateY(0) scale(1)';
+    if (pull.removeAttribute) pull.removeAttribute('data-pulling');
+    applied = false;
+    setTimeout(function () {
+      pull.classList.remove('springing');
+      pull.style.transform = '';
+      if (c) { c.classList.remove('springing'); c.style.transform = ''; }
+    }, 380);
+  }
+
+  sc.addEventListener('touchstart', function (ev) {
+    if (sc.scrollTop > 0 || ev.touches.length !== 1) { pulling = false; return; }
+    startY = ev.touches[0].clientY;
+    delta = 0;
+    pulling = true;
+  }, { passive: true });
+
+  sc.addEventListener('touchmove', function (ev) {
+    if (!pulling || ev.touches.length !== 1) return;
+    delta = ev.touches[0].clientY - startY;
+    if (delta <= 0) {                          // 往上滑 → 交还给正常滚动
+      if (applied) reset(false);
+      if (sc.scrollTop > 0) pulling = false;
+      return;
+    }
+    if (sc.scrollTop > 0) return;              // 已经滚下去了，不做下拉
+    // 阻尼：越拉越吃力，手感接近微信
+    var damped = MAX * (1 - Math.pow(1 - Math.min(delta / (MAX * 2.4), 1), 2));
+    if (pull.setAttribute) pull.setAttribute('data-pulling', '1');
+    applyPull(damped);
+  }, { passive: true });
+
+  var settle = function () {
+    if (!pulling) return;
+    pulling = false;
+    var fire = delta >= TRIGGER && sc.scrollTop <= 0;
+    reset(true);
+    // 本来就在顶部，这里只是把「回顶」这件事实实在在地保证一次
+    if (fire && sc.scrollTo) sc.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  sc.addEventListener('touchend', settle, { passive: true });
+  sc.addEventListener('touchcancel', settle, { passive: true });
+}
+
+/* ---------------- 时间线右上角「相机」：拍照 / 相册 / 长按写纯文字 ----------------
+   对齐微信朋友圈的两个手势：
+     · 单击 → 弹出菜单，选「拍照」或「从手机相册选择」
+     · 长按 → 直接进发布页写纯文字日记（没有配图入口）
+   为什么不用现成的 bindLongPress：长按抬手后浏览器还会补发一次 click，
+   复用那套就会出现「长按进了发布页、松手又弹出菜单」。这里自己管 pointer 事件，
+   并用 fired 标记把那一次 click 吞掉。
+-------------------------------------------------------------------------- */
+var CAMERA_LONG_MS = 480;   // 按住多久算长按（和卡片长按保持一致）
+var CAMERA_SLOP = 10;       // 手指移动超过这么多像素就当成滑动，取消长按
+
+/** 点相机弹出的菜单（微信上是「拍照 / 从手机相册选择」两个入口） */
+function openCameraSheet() {
+  openSheet([
+    {
+      label: '拍照',
+      onClick: function () {
+        // App 内优先走原生相机：只有这条路能同时满足「拍到的照片存进手机系统相册」
+        // （takePhoto 的 saveToGallery）。网页版没有系统相册，走 <input capture>。
+        if (Native.isNative && Native.hasPlugin('Camera')) captureToGallery();
+        else pickCamera(function () { openComposer(null); });
+      }
+    },
+    { label: '从手机相册选择', onClick: function () { pickImages(function () { openComposer(null); }); } }
+  ]);
+}
+
+/**
+ * 原生拍照：拍到照片 → 压缩成和「相册选择」完全一致的草稿图片 → 进发布页。
+ *
+ * 为什么不用 <input type="file" capture>：那条路即使拍成功了，
+ * 照片也只活在 WebView 的临时文件里，**不会进手机的系统相册** ——
+ * 这正是「App 里拍了照，但相册里没有」的原因。原生 takePhoto 的
+ * saveToGallery 才是真正把它写进系统相册 + 媒体库的那一步，
+ * 顺带还能让系统相册立刻索引到（别的 App 也看得见）。
+ *
+ * 之所以还要兜底：@capacitor/camera 是可选依赖，没装 / 没 cap sync 时
+ * 上面的 hasPlugin 会返回 false，自动退到网页实现，功能不中断。
+ */
+function captureToGallery() {
+  var Camera = Native.plugin('Camera');
+  if (!Camera || !Camera.takePhoto) { pickCamera(function () { openComposer(null); }); return; }
+
+  toast('正在打开相机…', 1200);
+  Camera.takePhoto({
+    quality: 90,
+    correctOrientation: true,   // 按 EXIF 摆正，否则横拍的照片进日记会躺着
+    saveToGallery: true         // ★ 需求1：同时写入手机系统相册
+  }).then(function (res) {
+    return photoBlob(res).then(function (blob) {
+      if (!blob) throw new Error('照片读取失败');
+      return { blob: blob, saved: !!(res && res.saved) };
+    });
+  }).then(function (r) {
+    // saved 为 false 说明系统相册那步没成功（通常是没给存储/照片权限）。
+    // 不提示的话，用户会以为存进去了，回头翻相册才发现没有。
+    // 注意：照片此时已在系统相册里，所以这条提示**不能**让后面的入草稿流程中断。
+    if (!r.saved) toast('照片已拍摄，但没能存入系统相册：请检查应用的「存储 / 照片」权限', 3200);
+    openComposerForCamera();
+    var outcome = addCameraDraftImage(r.blob);
+    if (outcome.toast) toast(outcome.toast, 2600);
+  }).catch(function (err) {
+    // 取错误码时不能写 err && (err.code || err.message) —— err 为 null 时
+    // 那个表达式会落到 err.message 上二次抛错，把真正的失败原因盖掉（踩过）。
+    var code = (err && (err.code || err.message)) || String(err || '');
+    // 用户自己点了取消：这是正常操作，不该弹报错
+    if (/0006/.test(code) || /cancel/i.test(code)) return;
+    console.warn('[Camera] takePhoto 失败', err);
+    toast('拍照失败：' + (((err && err.message) || String(err)) || '未知错误'));
+  });
+}
+
+/**
+ * 为「拍照」准备好发布页，且**不破坏已有草稿**。
+ *
+ * ⚠️ 不能无脑调 openComposer(null)：它会**无条件清空草稿**（见 openComposer 开头）。
+ *    于是"在发布页里拍第二张"会把第一张抹掉 —— 用户看到的是"拍完只剩一张"
+ *    （踩过：从时间线相机图标连拍两张，草稿始终只有 1 张）。
+ * 三种情形：
+ *   · 发布页没开      → 正常打开，草稿本来就是空的
+ *   · 已开且非纯文字  → 什么都不做，直接把新照片追加进现有草稿
+ *   · 已开但是纯文字  → 重开成可配图模式（必须走 openComposer 才能摘掉 textOnly），
+ *                      草稿是空的，但要**保留用户已经写好的文字**
+ */
+function openComposerForCamera() {
+  var composerOpen = $('#screen-composer').classList.contains('active');
+  if (!composerOpen) { openComposer(null); return; }
+  if (!State.textOnly) return;
+  var typed = $('#composerText').value;
+  openComposer(null);
+  if (typed) { $('#composerText').value = typed; autoGrow(); updateCounter(); updatePublishState(); }
+}
+
+/**
+ * 把刚拍的照片压进当前草稿。
+ * 不直接复用 addImages：它会按 FileList 过滤并在各种边界下提前 return，
+ * 拿它的返回值去 .then() 会踩到 undefined（就是上面那个报错的来源）。
+ * 这里只做一件明确的事，并把「没能加进去的原因」回传给调用方去提示。
+ *
+ * w/h 必须量出来再写进去：它们是单图缩略图按原始宽高比排版的依据，
+ * 也是发布时存进图片记录的尺寸。留 0 会让比例判断失效（0 是 falsy）。
+ *
+ * @returns {{ ok: boolean, toast: string }}
+ */
+function addCameraDraftImage(blob) {
+  if (State.textOnly) return { ok: false, toast: '这次是纯文字模式，照片已存入系统相册' };
+  if (State.draftImages.length >= 9) return { ok: false, toast: '草稿已满 9 张，照片已存入系统相册' };
+  var id = uid();
+  var url = URL.createObjectURL(blob);
+  urlCache.set(id, url);        // 和其它入口一致，交给全局 Blob URL 缓存管理
+  var item = { id: id, blob: blob, w: 0, h: 0, url: url, isNew: true };
+  State.draftImages.push(item);
+  renderComposerGrid();
+  // 异步量真实尺寸，量到再刷新一次网格
+  ImageProc.loadImage(url).then(function (img) {
+    item.w = img.naturalWidth || img.width || 0;
+    item.h = img.naturalHeight || img.height || 0;
+    renderComposerGrid();
+  }).catch(function () { /* 量不出尺寸不影响发布，只是单图比例会退化 */ });
+  return { ok: true, toast: '' };
+}
+
+/** 把 Camera.takePhoto 的返回值读成 Blob（webPath 优先，退回 base64 缩略图） */
+function photoBlob(res) {
+  var src = (res && (res.webPath || res.uri)) || '';
+  var b64 = (res && res.thumbnail) || '';
+  if (src && typeof fetch === 'function') {
+    return fetch(src).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.blob();
+    }).catch(function () { return b64 ? b64Blob(b64) : null; });
+  }
+  return Promise.resolve(b64 ? b64Blob(b64) : null);
+}
+
+/** base64（可能带 data: 前缀）→ Blob；解不开返回 null，别把整条流程带崩 */
+function b64Blob(b64) {
+  try {
+    var m = /^data:([^;,]+)?(;base64)?,(.*)$/i.exec(b64);
+    var mime = (m && m[1]) || 'image/jpeg';
+    var data = m ? m[3] : b64;
+    var bin = atob(data), n = bin.length, u8 = new Uint8Array(n);
+    for (var i = 0; i < n; i++) u8[i] = bin.charCodeAt(i);
+    return new Blob([u8], { type: mime });
+  } catch (e) { return null; }
+}
+
+function bindCameraButton(btn) {
+  if (!btn) return;
+  var timer = null, fired = false, moved = false, sx = 0, sy = 0;
+
+  function stopTimer() {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    btn.classList.remove('pressing');
+  }
+
+  btn.addEventListener('pointerdown', function (ev) {
+    fired = false; moved = false;
+    sx = ev.clientX; sy = ev.clientY;
+    btn.classList.add('pressing');
+    timer = setTimeout(function () {
+      timer = null;
+      fired = true;              // 这次算长按：随后的 click 要吞掉，否则菜单会覆盖上来
+      btn.classList.remove('pressing');
+      openComposer(null, { textOnly: true });
+    }, CAMERA_LONG_MS);
+  });
+
+  btn.addEventListener('pointermove', function (ev) {
+    if (moved || !timer) return;
+    if (Math.abs(ev.clientX - sx) > CAMERA_SLOP || Math.abs(ev.clientY - sy) > CAMERA_SLOP) {
+      moved = true;
+      stopTimer();
+    }
+  });
+
+  btn.addEventListener('pointerup', stopTimer);
+  btn.addEventListener('pointercancel', stopTimer);
+  btn.addEventListener('pointerleave', stopTimer);
+
+  btn.addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    if (fired) { fired = false; return; }   // 长按已处理，吞掉补发的这次 click
+    openCameraSheet();
+  });
+}
+
+/**
+ * 桌面档（鼠标）也支持"点顶部回顶"：点时间线导航栏标题即可。
+ * 手机上则用上面的下拉手势。
+ */
+function bindScrollTopOnNav() {
+  var title = $('#screen-timeline .nav .nav-title');
+  if (!title) return;
+  title.style.cursor = 'pointer';
+  title.addEventListener('click', function () {
+    var sc = $('#homeScroll');
+    if (sc.scrollTo) sc.scrollTo({ top: 0, behavior: 'smooth' });
+    else sc.scrollTop = 0;
+  });
+}
+function moveViewer(i, instant) {
+  var track = $('#viewerTrack');
+  // 翻页时把目标这张的缩放归位：每张图各自独立，避免「上一张放大了、翻过来还是放大的」
+  if (State.viewerReset) State.viewerReset(i);
+  if (instant) track.style.transition = 'none';
+  track.style.transform = 'translateX(' + (-i * 100) + '%)';
+  if (instant) requestAnimationFrame(function () { track.style.transition = ''; });
+}
+function viewerZoomText() {
+  var z = State.viewerZoom;
+  return (z && z > 1.01) ? ('  ·  ' + z.toFixed(1) + 'x') : '';
+}
+function updateViewerCount() {
+  $('#viewerCount').textContent = (State.viewerIndex + 1) + '/' + State.viewerList.length + viewerZoomText();
+}
+function closeViewer() {
+  $('#viewer').classList.remove('show');
+  $('#viewerTrack').innerHTML = '';
+}
+
+/* ---------------- 操作面板 / 对话框 ---------------- */
+var maskTimer = null;
+function openSheet(items) {
+  clearTimeout(maskTimer);          // 关键：取消上一个面板遗留的关闭定时器
+  var sheet = $('#actionSheet');
+  sheet.innerHTML = items.map(function (it, i) {
+    return '<button class="sheet-item ' + (it.danger ? 'danger' : '') + '" data-i="' + i + '">' +
+      escapeHtml(it.label) + '</button>';
+  }).join('') +
+    '<button class="sheet-item cancel" data-i="-1">取消</button>';
+  sheet.style.display = '';
+  $('#dialog').style.display = 'none';
+  sheet.onclick = function (ev) {
+    var btn = ev.target.closest('.sheet-item');
+    if (!btn) return;
+    var idx = Number(btn.getAttribute('data-i'));
+    closeMask();
+    if (idx >= 0 && items[idx] && items[idx].onClick) items[idx].onClick();
+  };
+  requestAnimationFrame(function () { $('#mask').classList.add('show'); });
+}
+function openDialog(opts) {
+  clearTimeout(maskTimer);          // 同理，避免「面板→确认框」连开时被误隐藏
+  $('#dialogTitle').textContent = opts.title || '';
+  var dt = $('#dialogText');
+  // 用 textContent 时 \n 不会变成换行（HTML 会折叠空白），所以显式转 <br>；
+  // 同时把 <b> 之类的标签放行，方便调用方强调某一段。
+  if (opts.html) {
+    dt.innerHTML = TextFmt.toHtml(opts.text || '').replace(/&lt;b&gt;/g, '<b>').replace(/&lt;\/b&gt;/g, '</b>');
+  } else {
+    dt.innerHTML = TextFmt.toHtml(opts.text || '');
+  }
+  dt.style.display = opts.text ? '' : 'none';
+  var btns = opts.buttons || [{ label: '知道了' }];
+  var box = $('#dialogBtns');
+  box.innerHTML = btns.map(function (b, i) {
+    return '<button class="' + (b.style || '') + '" data-i="' + i + '">' + escapeHtml(b.label) + '</button>';
+  }).join('');
+  $('#actionSheet').style.display = 'none';
+  $('#dialog').style.display = '';
+  box.onclick = function (ev) {
+    var btn = ev.target.closest('button');
+    if (!btn) return;
+    var idx = Number(btn.getAttribute('data-i'));
+    closeMask();
+    if (btns[idx] && btns[idx].onClick) btns[idx].onClick();
+  };
+  requestAnimationFrame(function () { $('#mask').classList.add('show'); });
+}
+function closeMask() {
+  $('#mask').classList.remove('show');
+  clearTimeout(maskTimer);
+  maskTimer = setTimeout(function () {
+    $('#actionSheet').style.display = 'none';
+    $('#dialog').style.display = 'none';
+  }, 240);
+}
+
+/* ---------------- 发布 / 编辑 ---------------- */
+/**
+ * 打开发布页。
+ * @param entry 传入则进入编辑模式
+ * @param opts  { textOnly: true } 只写文字 —— 长按时间线相机进来时用，隐藏配图入口
+ */
+function openComposer(entry, opts) {
+  opts = opts || {};
+  State.editingId = entry ? entry.id : null;
+  State.draftImages = [];
+  // 编辑已有日记时一律允许配图（那篇本来可能就有图）
+  State.textOnly = !!opts.textOnly && !entry;
+  $('#composerTitle').textContent = entry ? '编辑日记' : (State.textOnly ? '写文字' : '写日记');
+  // 底部提示跟着模式走：纯文字时别再提"图片会压缩"这种不相干的话
+  $('#composerTip').innerHTML = '日记仅保存在本机浏览器中，<b>不会上传服务器、他人无法查看</b>。' +
+    (State.textOnly ? '' : '图片会先压缩再存入本地数据库，可随时在设置里导出备份。');
+  $('#composerText').value = entry ? (entry.text || '') : '';
+  autoGrow();
+  updateCounter();
+
+  var job = Promise.resolve();
+  if (entry && entry.images && entry.images.length) {
+    job = Promise.all(entry.images.map(function (iid) {
+      return Store.getImage(iid).then(function (rec) {
+        if (!rec || !rec.blob) return null;
+        // 复用全局 Blob URL 缓存，避免重复创建
+        return imageURL(iid).then(function (url) {
+          return url ? { id: iid, blob: rec.blob, w: rec.w, h: rec.h, url: url } : null;
+        });
+      });
+    })).then(function (arr) {
+      State.draftImages = arr.filter(Boolean);
+    });
+  }
+  job.then(function () {
+    renderComposerGrid();
+    showScreen('#screen-composer');
+    setTimeout(function () { if (!entry) $('#composerText').focus(); }, 320);
+  });
+}
+function renderComposerGrid() {
+  var grid = $('#composerGrid');
+  // 纯文字模式：整个配图区收起来，连「+」都不给，想配图重新点一次相机就行
+  if (State.textOnly) {
+    grid.innerHTML = '';
+    grid.style.display = 'none';
+    updatePublishState();
+    return;
+  }
+  grid.style.display = '';
+  var imgs = State.draftImages;
+  var html = imgs.map(function (it, i) {
+    return '<div class="cell"><img src="' + it.url + '" alt="">' +
+      '<button class="del" data-del="' + i + '" aria-label="移除">' +
+      '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M2.5 2.5l11 11M13.5 2.5l-11 11"/></svg>' +
+      '</button></div>';
+  }).join('');
+  if (imgs.length < 9) {
+    html += '<button class="cell add" id="btnAddImage">' +
+      '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">' +
+      '<path d="M12 5.5v13M5.5 12h13"/></svg></button>';
+  }
+  grid.innerHTML = html;
+  updatePublishState();
+}
+function updatePublishState() {
+  var hasText = $('#composerText').value.trim().length > 0;
+  $('#btnPublish').disabled = !(hasText || State.draftImages.length > 0);
+}
+function updateCounter() {
+  var len = $('#composerText').value.length;
+  var c = $('#composerCounter');
+  c.textContent = len + '/2000';
+  c.classList.toggle('warn', len > 1900);
+}
+function autoGrow() {
+  var t = $('#composerText');
+  t.style.height = 'auto';
+  t.style.height = Math.min(t.scrollHeight, Math.round(window.innerHeight * 0.46)) + 'px';
+}
+/**
+ * 把选中的图片压进草稿。
+ *
+ * ⚠️ 契约：**所有分支都必须返回 Promise**（哪怕只是 Promise.resolve()）。
+ *    它原先是个隐式"没返回值"的函数，调用方写 `addImages(...).then(...)` 时
+ *    会在**任何情况下**都炸出「Cannot read properties of undefined (reading 'then')」
+ *    —— 包括最正常的路径，因为正常路径也是隐式 undefined（这个坑踩过两次：
+ *    一次在拍照入草稿，一次在相机结果恢复）。
+ *    返回值表示"这一批处理完了"，不代表每张都成功（失败的会在 toast 里说明）。
+ */
+function addImages(files) {
+  // 纯文字模式下没有配图入口，正常走不到这里；加一层以防万一（比如选择器回调和模式切换撞上）
+  if (State.textOnly) { toast('这次只写文字，想配图请点一下相机'); return Promise.resolve([]); }
+  var room = 9 - State.draftImages.length;
+  if (room <= 0) { toast('最多只能添加 9 张图片'); return Promise.resolve([]); }
+  var picked = Array.prototype.slice.call(files).filter(function (f) {
+    return /^image\//.test(f.type);
+  }).slice(0, room);
+  if (!picked.length) { toast('请选择图片文件'); return Promise.resolve([]); }
+  toast('正在压缩 ' + picked.length + ' 张图片…', 1200);
+  return Promise.all(picked.map(function (f) {
+    return ImageProc.compress(f).then(function (r) {
+      var id = uid();
+      var url = URL.createObjectURL(r.blob);
+      urlCache.set(id, url);          // 交给全局 Blob URL 缓存统一管理
+      return { id: id, blob: r.blob, w: r.w, h: r.h, url: url, isNew: true };
+    }).catch(function () { return null; });
+  })).then(function (arr) {
+    var ok = arr.filter(Boolean);
+    State.draftImages = State.draftImages.concat(ok);
+    renderComposerGrid();
+    if (ok.length < picked.length) toast('有 ' + (picked.length - ok.length) + ' 张图片处理失败');
+    return ok;
+  });
+}
+function publish() {
+  var text = TextFmt.normalize($('#composerText').value).trim();
+  var imgs = State.draftImages;
+  if (!text && !imgs.length) { toast('写点什么再发表吧'); return; }
+  $('#btnPublish').disabled = true;
+  publishCore(text, imgs).catch(function (err) {
+    console.error(err);
+    $('#btnPublish').disabled = false;
+    toast('保存失败：' + (err && err.message === 'quota' ? '本地存储空间已满' : (err && err.message) || '未知错误'));
+  });
+}
+/**
+ * 发表的核心：与输入框解耦，接收已经整理好的文本与图片。
+ * 抽出来是为了让回归测试能直接投递长文本（验证折叠），不必去驱动 textarea。
+ */
+function publishCore(text, imgs) {
+  var entryId = State.editingId || uid();
+  var now = Date.now();
+  var keepIds = imgs.map(function (it) { return it.id; });
+
+  return Store.getEntry(entryId).then(function (old) {
+    // 1) 写入（或覆盖）本次要保留的图片记录
+    return Promise.all(imgs.map(function (it, idx) {
+      return Store.putImage({
+        id: it.id, entryId: entryId, w: it.w, h: it.h,
+        size: it.blob.size || 0, order: idx, blob: it.blob
+      });
+    })).then(function () {
+      // 2) 编辑场景：清理被移除的旧图
+      var oldImages = (old && old.images) ? old.images : [];
+      var dropped = oldImages.filter(function (i) { return keepIds.indexOf(i) < 0; });
+      return Promise.all(dropped.map(function (i) { return Store.deleteImage(i); }));
+    }).then(function () {
+      // 3) 写入日记条目（createdAt 保持首次发布时间）
+      var entry = {
+        id: entryId,
+        text: text,
+        images: keepIds,
+        createdAt: (old && old.createdAt) ? old.createdAt : now,
+        updatedAt: old ? now : 0
+      };
+      return Store.saveEntry(entry);
+    }).then(function () {
+      State.editingId = null;
+      State.draftImages = [];
+      hideScreen('#screen-composer');
+      return loadHome();
+    }).then(function () {
+      toast(old ? '已保存修改' : '已发表');
+      switchTab('timeline');
+      var sc = $('#homeScroll');
+      if (!old) {
+        if (sc.scrollTo) sc.scrollTo({ top: 0, behavior: 'smooth' });
+        else sc.scrollTop = 0;
+      }
+    });
+  });
+}
+
+/* ---------------- 页面切换 ---------------- */
+function showScreen(sel) {
+  var el = $(sel);
+  el.classList.add('active');
+}
+function hideScreen(sel) {
+  $(sel).classList.remove('active');
+}
+
+/* ---------------- 长按 ---------------- */
+function bindLongPress(root, selector, handler) {
+  var timer = null, target = null, moved = false;
+  root.addEventListener('pointerdown', function (ev) {
+    var el = ev.target.closest(selector);
+    if (!el || ev.target.closest('.post-more') || ev.target.closest('.ph')) return;
+    target = el; moved = false;
+    el.classList.add('pressing');
+    timer = setTimeout(function () {
+      el.classList.remove('pressing');
+      if (!moved) handler(el);
+      target = null;
+    }, 480);
+  }, { passive: true });
+  function cancel() {
+    clearTimeout(timer);
+    if (target) target.classList.remove('pressing');
+  }
+  root.addEventListener('pointerup', cancel);
+  root.addEventListener('pointercancel', cancel);
+  root.addEventListener('pointermove', function () {
+    clearTimeout(timer);
+    if (target) target.classList.remove('pressing');
+  }, { passive: true });
+}
+
+/* ---------------- 设置页渲染 ---------------- */
+function renderSettings() {
+  renderProfile();
+  Store.usage().then(function (bytes) {
+    var hint = $('#exportHint');
+    var bar = $('#storageBar');
+    // 关键：0 也要写一遍。以前这里遇到 0 直接 return，于是「清空全部日记」之后屏幕上
+    // 会一直留着清空前那个「已用 xx MB」——看着像没清干净。
+    hint.textContent = bytes ? '已用 ' + ImageProc.fmtSize(bytes) : '暂无内容';
+    bar.style.display = bytes ? 'block' : 'none';
+    if (!bytes) return;
+    var limit = Store.mode === 'idb' ? 200 * 1024 * 1024 : 5 * 1024 * 1024;
+    bar.firstElementChild.style.width = Math.min(100, bytes / limit * 100).toFixed(1) + '%';
+  });
+}
+
+/* ---------------- 导出 / 导入 ---------------- */
+/**
+ * 组装备份载荷（供导出使用）。
+ * 抽成独立函数是为了让回归测试能拿到"用户点导出时同一份 JSON"来断言，
+ * 而不是在测试里另写一遍序列化 —— 那样测的就不是真实导出结果了。
+ */
+function buildBackup() {
+  return Store.listEntries().then(function (entries) {
+    return Promise.all(entries.map(function (e) {
+      return Promise.all((e.images || []).map(function (iid) {
+        return Store.getImage(iid).then(function (rec) {
+          if (!rec || !rec.blob) return null;
+          return ImageProc.blobToDataURL(rec.blob).then(function (data) {
+            return { id: iid, w: rec.w, h: rec.h, data: data };
+          });
+        });
+      })).then(function (imgs) {
+        return Object.assign({}, e, { _imageData: imgs.filter(Boolean) });
+      });
+    }));
+  }).then(function (full) {
+    return {
+      app: 'wechat-diary',
+      schema: 1,
+      exportedAt: new Date().toISOString(),
+      profile: { nickname: Meta.data.nickname, sign: Meta.data.sign },
+      entryCount: full.length,
+      entries: full
+    };
+  });
+}
+/**
+ * 备份文件名：纯 ASCII。
+ * 文件名里的中文/空格在部分安卓"文件"应用里会显示乱码，既然已经带日期就够区分了。
+ */
+function backupFileName(fmt) {
+  var ext = fmt === 'md' ? '.md' : (fmt === 'txt' ? '.txt' : '.json');
+  var d = new Date();
+  return 'my-diary-backup-' + d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) +
+    '-' + pad2(d.getHours()) + pad2(d.getMinutes()) + ext;
+}
+
+/* ---------------- 导出格式：JSON / 纯文本 / Markdown ---------------- */
+/**
+ * 三种导出格式的选择面板。
+ * 默认（也是推荐）是 JSON —— 它带图片、能原样恢复；
+ * txt / md 是给"想拿出去读/存档"用的，所以选项label里先把差别写清楚，
+ * 别让用户导完才发现图片没跟着出来。
+ */
+function pickExportFormat() {
+  openSheet([
+    { label: 'JSON 备份（推荐 · 含图片可恢复）', onClick: function () { confirmExport('json'); } },
+    { label: '纯文本 .txt（仅文字）', onClick: function () { confirmExport('txt'); } },
+    { label: 'Markdown .md（仅文字）', onClick: function () { confirmExport('md'); } }
+  ]);
+}
+
+/**
+ * 把日记拼成纯文本 / Markdown。
+ *
+ * 两条约束：
+ *   ① 正文一字不改 —— 只做换行符统一，绝不 trim、不折行、不转义；
+ *   ② 得能被自己再读回来 —— 所以头部行是固定机器可识别格式
+ *      （txt：`———————— 第 N 篇 · YYYY-MM-DD HH:mm ————————`；
+ *       md：`## YYYY-MM-DD HH:mm`），解析端 parseTextBackup 按它切分。
+ *      日期**写在头部行里**而不是另起一行：另起一行的话解析时要么把它吃进正文、
+ *      要么得无条件删掉正文第一行，碰到用户自己写的第一行就是个日期就会误删。
+ * 图片只留一行「（附 N 张图片）」提示：文本格式里塞不下图片，但也不能假装没有。
+ */
+function buildTextBackup(entries, fmt) {
+  var md = fmt === 'md';
+  var list = (entries || []).slice().sort(function (a, b) {
+    return (a.createdAt || 0) - (b.createdAt || 0);   // 按时间正序，读起来才是连贯的
+  });
+  var out = [];
+  if (md) {
+    out.push('# 我的日记', '');
+    out.push('> 导出时间：' + TimeFmt.full(Date.now()) + ' · 共 ' + list.length + ' 篇');
+    out.push('> 仅含文字，不含图片。要完整恢复（含图片）请使用 JSON 备份。', '');
+  } else {
+    out.push('我的日记 · 导出备份（纯文本）',
+      '导出时间：' + TimeFmt.full(Date.now()),
+      '共 ' + list.length + ' 篇日记', '',
+      '本文件仅含文字，不含图片，适合阅读与存档。',
+      '要完整恢复（含图片）请使用 JSON 备份。', '');
+  }
+  list.forEach(function (e, i) {
+    var body = TextFmt.normalize(e.text || '');
+    var nImg = (e.images || []).length;
+    if (md) {
+      out.push('---', '', '## ' + TimeFmt.full(e.createdAt), '');
+      if (body) out.push(body, '');
+      if (nImg) out.push('*（附 ' + nImg + ' 张图片）*', '');
+    } else {
+      out.push('———————— 第 ' + (i + 1) + ' 篇 · ' + TimeFmt.full(e.createdAt) + ' ————————', '');
+      if (body) out.push(body, '');
+      if (nImg) out.push('（附 ' + nImg + ' 张图片）', '');
+    }
+  });
+  return out.join('\n').replace(/\n+$/, '\n');
+}
+
+function exportBackup() {
+  toast('正在打包…', 1000);
+  buildBackup().then(function (payload) {
+    // JSON.stringify 会自动把换行写成 \n，缩进 2 便于人工查看。
+    // 换行在文件里就是 `\n` 两个字符，任何编辑器打开都能看懂，
+    // 不会出现"显示的不是我写的文本"。
+    saveBackupFile(backupFileName('json'), JSON.stringify(payload, null, 2)).then(function () {
+      toast('已导出 ' + payload.entryCount + ' 篇日记');
+    }).catch(function (err) {
+      console.error(err);
+      toast('导出失败：' + ((err && err.message) || '未知原因'), 2600);
+    });
+  }).catch(function () { toast('导出失败'); });
+}
+
+/** 纯文本 / Markdown 导出。不走 buildBackup（不需要读图片 base64），所以快得多 */
+function exportTextBackup(fmt) {
+  toast('正在整理…', 1000);
+  Store.listEntries().then(function (entries) {
+    var text = buildTextBackup(entries, fmt);
+    return saveBackupFile(backupFileName(fmt), text,
+      fmt === 'md' ? 'text/markdown' : 'text/plain').then(function () {
+        toast('已导出 ' + entries.length + ' 篇日记');
+      });
+  }).catch(function (err) {
+    console.error(err);
+    toast('导出失败：' + ((err && err.message) || '未知原因'), 2600);
+  });
+}
+
+/**
+ * 导出的二次确认。
+ * 桌面上的「备份」磁贴正好在屏幕正中央，原本点一下就直接下载一个 json —— 很容易误触，
+ * 而且"莫名多出一个文件"本身也让人摸不着头脑。所以先确认再导，
+ * 口径和「导入备份」「清空全部日记」保持一致。
+ * 这里只读一次条目列表来报数，真正的打包（含图片转 base64，可能很慢）留到确认之后。
+ */
+function confirmExport(format) {
+  format = (format === 'txt' || format === 'md') ? format : 'json';
+  Store.listEntries().then(function (entries) {
+    var n = entries.length;
+    var body;
+    if (!n) {
+      body = '当前还没有日记。\n仍要导出一份空的备份文件吗？';
+    } else if (format === 'json') {
+      body = '将导出 <b>' + n + ' 篇日记</b>（最近一篇：' + TimeFmt.full(entries[0].createdAt) + '）。\n' +
+        '含图片，可完整恢复。文件保存在本机，不会上传到任何地方。';
+    } else {
+      body = '将把 <b>' + n + ' 篇日记</b>导出成' + (format === 'md' ? 'Markdown' : '纯文本') + '文件。\n' +
+        '只含文字、不含图片，适合阅读与存档；要能恢复请改用 JSON 备份。';
+    }
+    openDialog({
+      title: '导出备份',
+      html: true,
+      text: body,
+      buttons: [
+        { label: '取消' },
+        {
+          label: '导出', style: 'primary', onClick: function () {
+            if (format === 'json') exportBackup(); else exportTextBackup(format);
+          }
+        }
+      ]
+    });
+  }).catch(function () { toast('读取本地数据失败'); });
+}
+
+/**
+ * 解析备份文件文本。
+ * 正常情况就是纯 UTF-8 的 JSON，但有两类历史文件要兜住：
+ *   ① 带 BOM 的（某些编辑器/编码器会加），JSON.parse 不认 BOM，得先剥掉；
+ *   ② **被 base64 编码过的** —— 早期版本给 `writeFile` 传了非法编码值 `base64`，
+ *      插件把 base64 字符串原样写进了文件。这种文件其实是完整的备份，
+ *      解一下就能读，直接把它救回来，不然用户手上的备份就废了。
+ */
+function parseBackupText(raw) {
+  var s = String(raw == null ? '' : raw).replace(/^\uFEFF/, '');
+  try { return JSON.parse(s); } catch (e) { /* 继续尝试 base64 */ }
+  var compact = s.replace(/\s+/g, '');
+  if (!compact || !/^[A-Za-z0-9+/]+={0,2}$/.test(compact)) return null;
+  try {
+    // 先按 base64 还原成 UTF-8 文本，再当 JSON 解
+    var bin = atob(compact);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    var text = new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
+    return JSON.parse(text);
+  } catch (e2) { return null; }
+}
+
+/* ---------------- 导入格式：JSON / 纯文本 / Markdown ---------------- */
+/** 上一次选的导入格式。文件选择框是复用的一个 input，得把它记在外面 */
+var pendingImportFormat = 'json';
+
+/**
+ * 导入格式选择。
+ * 除了让用户明确"我导入的是什么"，还有个实际作用：选完顺手把 input 的 accept 换掉，
+ * 免得手机上文件选择器把要选的文件显示成灰色不可点。
+ */
+function pickImportFormat() {
+  openSheet([
+    { label: 'JSON 备份（推荐）', onClick: function () { startImport('json'); } },
+    { label: '纯文本 .txt', onClick: function () { startImport('txt'); } },
+    { label: 'Markdown .md', onClick: function () { startImport('md'); } }
+  ]);
+}
+function startImport(fmt) {
+  pendingImportFormat = (fmt === 'txt' || fmt === 'md') ? fmt : 'json';
+  var el = $('#fileImport');
+  el.accept = pendingImportFormat === 'json'
+    ? 'application/json,.json'
+    : (pendingImportFormat === 'md' ? 'text/markdown,.md,text/plain' : 'text/plain,.txt');
+  el.click();
+}
+
+function importBackup(file, fmt) {
+  fmt = (fmt === 'txt' || fmt === 'md') ? fmt : (pendingImportFormat || 'json');
+  var fr = new FileReader();
+  fr.onload = function () {
+    var raw = fr.result;
+    var data = parseBackupText(raw);
+    // 只要内容真能当备份 JSON 解析，就按 JSON 走 —— 用户可能只是格式选错了，
+    // 没必要因为这个把一份好好的备份退回去。
+    if (data && data.app === 'wechat-diary' && Array.isArray(data.entries)) {
+      confirmImport(data);
+      return;
+    }
+    if (fmt === 'json') {
+      toast(data ? '这不是本应用导出的备份文件' : '文件格式不正确');
+      return;
+    }
+    var entries = parseTextBackup(raw, fmt);
+    if (!entries.length) { toast('文件里没有可导入的内容'); return; }
+    confirmImportText(entries);
+  };
+  fr.readAsText(file);
+  pendingImportFormat = 'json';    // 用完复位，下次默认还是 JSON
+}
+
+function confirmImport(data) {
+  openDialog({
+    title: '导入备份',
+    text: '共 ' + data.entries.length + ' 篇日记。导入会合并到现有日记中（相同 ID 覆盖）。',
+    buttons: [
+      { label: '取消' },
+      {
+        label: '导入', style: 'primary', onClick: function () {
+          doImport(data).then(function (n) {
+            toast('已导入 ' + n + ' 篇日记');
+            return loadHome();
+          }).catch(function () { toast('导入失败，可能空间不足'); });
+        }
+      }
+    ]
+  });
+}
+
+/**
+ * 把导出过的 txt / md 读回来。
+ *
+ * 切分规则与 buildTextBackup 的头部行一一对应；**认不出来就整份当一篇**——
+ * 用户手上的可能是自己随便写的 txt，那样给一篇总比报错强。
+ * 日期能解析就用文件里的（这样导出去再导回来时间线顺序不乱），解析不出就用当前时间。
+ */
+function parseTextBackup(text, fmt) {
+  var md = fmt === 'md';
+  var lines = String(text == null ? '' : text).replace(/\r\n?/g, '\n').replace(/^\uFEFF/, '').split('\n');
+  var isHead = md
+    ? function (ln) { return /^##\s+\d{4}-\d{2}-\d{2}/.test(ln); }
+    : function (ln) { return /^—{4,}\s*第\s*\d+\s*篇/.test(ln); };
+  var heads = [];
+  for (var i = 0; i < lines.length; i++) if (isHead(lines[i])) heads.push(i);
+
+  var stripNote = function (s) {
+    return s.replace(/^\s*\*?（附\s*\d+\s*张图片）\*?\s*$/gm, '')
+      .replace(/^\n+/, '').replace(/\n+$/, '');
+  };
+  var toTs = function (s) {
+    var m = String(s).match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+    if (!m) return 0;
+    return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime();
+  };
+
+  if (!heads.length) {
+    var only = stripNote(lines.join('\n').replace(/^\s*-{3,}\s*$/gm, ''));
+    return only.trim() ? [{ text: only, createdAt: Date.now() }] : [];
+  }
+  var out = [];
+  heads.forEach(function (h, k) {
+    var end = (k + 1 < heads.length) ? heads[k + 1] : lines.length;
+    var body = stripNote(lines.slice(h + 1, end).join('\n').replace(/^\s*-{3,}\s*$/gm, ''));
+    if (!body.trim()) return;
+    // 日期就在头部行里（两种格式都是），解析不出就用当前时间
+    var ts = toTs(lines[h]);
+    out.push({ text: body, createdAt: ts || Date.now() });
+  });
+  return out;
+}
+
+function confirmImportText(entries) {
+  openDialog({
+    title: '导入文本',
+    text: '识别到 ' + entries.length + ' 篇文字内容，将作为新日记追加到时间线（不含图片）。',
+    buttons: [
+      { label: '取消' },
+      {
+        label: '导入', style: 'primary', onClick: function () {
+          doImportText(entries).then(function (n) {
+            toast('已导入 ' + n + ' 篇日记');
+            return loadHome();
+          }).catch(function () { toast('导入失败，可能空间不足'); });
+        }
+      }
+    ]
+  });
+}
+function doImportText(entries) {
+  var count = 0;
+  return entries.reduce(function (chain, e) {
+    return chain.then(function () {
+      return Store.saveEntry({
+        id: uid(),
+        text: e.text || '',
+        images: [],
+        createdAt: e.createdAt || Date.now(),
+        updatedAt: 0
+      }).then(function () { count++; });
+    });
+  }, Promise.resolve()).then(function () { return count; });
+}
+function doImport(data) {
+  var count = 0;
+  return data.entries.reduce(function (chain, e) {
+    return chain.then(function () {
+      var entryId = e.id || uid();
+      var ids = [];
+      return (e._imageData || []).reduce(function (c2, im) {
+        return c2.then(function () {
+          var imgId = im.id || uid();
+          var blob;
+          try { blob = ImageProc.dataURLToBlob(im.data); } catch (err) { return; }
+          ids.push(imgId);
+          return Store.putImage({
+            id: imgId, entryId: entryId, w: im.w || 1, h: im.h || 1,
+            size: blob.size || 0, blob: blob
+          });
+        });
+      }, Promise.resolve()).then(function () {
+        return Store.saveEntry({
+          id: entryId,
+          text: e.text || '',
+          images: ids,
+          createdAt: e.createdAt || Date.now(),
+          updatedAt: e.updatedAt || 0
+        });
+      }).then(function () { count++; });
+    });
+  }, Promise.resolve()).then(function () { return count; });
+}
+
+/* ==========================================================================
+   7. 锁屏逻辑
+   ========================================================================== */
+function renderLockDots() {
+  var html = '';
+  for (var i = 0; i < 6; i++) {
+    html += '<i class="' + (i < State.pinBuffer.length ? 'on' : '') + '"></i>';
+  }
+  $('#lockDots').innerHTML = html;
+}
+function lockSetSub(text) { $('#lockSub').textContent = text; }
+
+function showLock(mode, onSuccess) {
+  State.lockMode = mode;
+  State.pinBuffer = '';
+  State.tempPin = '';
+  State.lockOnSuccess = onSuccess || null;
+  // setup 有两个来源：首次设置（还没有密码，可以「暂不设置」）/ 修改密码（已有密码，可以「取消」）
+  State.lockSource = mode !== 'setup' ? 'verify' : (Meta.data.pinHash ? 'change' : 'first');
+  var enabling = onSuccess === 'enableLock';
+  $('#screen-lock').classList.add('show');
+
+  /**
+   * ★ 三个出口按钮的显隐。
+   *
+   * 记一次真实的死循环：用户在「我的」里关密码开关 → 弹确认框 → 点「关闭」，
+   * 以为关掉了；可开关还亮着「已设置」。原因是**这里当时没有任何退出入口** ——
+   * 锁屏只认 6 位数字：输对了也只是把开关**重新打开**（走 enableLock），
+   * 按返回键被吞掉，点「忘记密码」只给一条"清空全部日记"的绝路。
+   * 唯一的出路是「关闭密码 → 输密码 → 重开 → 再关 → 再输…」这个死循环。
+   *
+   * 现在的规则：
+   *   · 设置密码（带「取消」）—— 随时放弃，什么都不改
+   *   · 6 位验证 + 已有密码但没说要开启 → 给「关闭密码」和「取消」：
+   *     输对了能关，"不想关"也能体面退出（以前只有一条路可走）
+   *   · 验证 + 这次就是为了开密码（enabling）→ 不给「关闭密码」，
+   *     否则会出现"本来要开，结果点了关闭"的自相矛盾
+   *   · 验证 + 这次是为了改密码（changePin）→ 也不给「关闭密码」：
+   *     用户点的是"改密码"，屏幕上却摆个"关闭密码"，等于给了一个他没要的操作
+   */
+  var hasPin = !!Meta.data.pinHash;
+  var isVerify = mode === 'verify';
+  var cancelable = mode === 'setup' || (isVerify && hasPin);
+  // 「关闭密码」只在"这次验证的目的就是关它"或"普通的日常解锁"时给
+  var closeOffer = isVerify && hasPin && !enabling && onSuccess !== 'changePin';
+
+  function showFoot(id, on) { $(id).style.display = on ? '' : 'none'; }
+  showFoot('#lockSkip', mode === 'setup');                       // 「暂不设置」/「取消」
+  showFoot('#lockOff', closeOffer);                              // 「关闭密码」
+  // verify 模式下选择更多，两个按钮挤在一起容易误触，用「取消」替代原来的「暂不设置」
+  showFoot('#lockCancel', cancelable && isVerify);
+  $('#lockCancel').textContent = '取消';
+  $('#lockSkip').textContent = State.lockSource === 'change' ? '取消' : '暂不设置';
+  // 没有密码就没有东西可忘，"忘记密码"别挂在那里当装饰
+  showFoot('#lockForgot', hasPin);
+
+  $('#lockTitle').textContent = mode === 'verify' ? '输入密码' : (mode === 'setup' ? '设置 6 位数字密码' : '再次输入确认');
+  // 副标题要说清"这次验完会发生什么"：开 / 关 / 删 / 改 各一句，
+  // 别让用户输完密码才发现方向不对。clearPin 与 disableLock 都是"关"，
+  // 但对用户来说都是同一件事：以后不用再输了。
+  var willClose = onSuccess === 'clearPin' || onSuccess === 'disableLock';
+  lockSetSub(mode === 'verify'
+    ? (enabling ? '验证后开启密码验证'
+      : (willClose ? '验证后关闭密码'
+        : (onSuccess === 'changePin' ? '验证后修改密码' : '日记仅本人可见')))
+    : (mode === 'setup'
+      ? (State.lockSource === 'change' ? '输入新的 6 位数字密码' : '可选功能，只想自己看时才需要')
+      : '请再输入一次'));
+  renderLockDots();
+}
+function hideLock() {
+  $('#screen-lock').classList.remove('show');
+  // 出口按钮的显隐由 showLock 每次重算，顺便把开启密码的意图牌收掉，
+  // 免得下次打开锁屏时残留上一次的"关密码"意图
+  State.lockCloseAfterVerify = false;
+}
+
+/* ---------------- 密码开关的落地动作 ---------------- */
+/**
+ * 开启验证。密码本身保留着，这里只是把开关打开。
+ * 注意：必须走 renderSettings —— 「我的」里那两处状态文字
+ * （pinStateText 与整行右侧的副标题）都是它渲染的，漏一处就会看到
+ * "开关已经关了、文字还写着已设置"。
+ */
+function enableLock() {
+  Meta.save({ pinEnabled: true });
+  renderSettings();
+  toast('已开启密码验证');
+}
+
+/* ---------------- 关闭 / 修改密码：都要先过密码 ---------------- */
+/**
+ * 「关闭密码」的入口（设置页的独立行 + 锁屏 footer 兜底）。
+ *
+ * 不提供"已经验证过就不再验"的快捷路径：锁屏 footer 只在锁屏可见时点得到，
+ * 那时用户人就在锁屏上，再按一次 6 位数字是自然动作；设置页那行则必须先验。
+ * 这样"关密码"永远等于"当场证明一次你是本人"，不会因为来源不同而松紧不一。
+ */
+function askClosePin() {
+  if (!Meta.data.pinHash) return;         // 没设过密码，无事可做
+  openDialog({
+    title: '关闭密码？',
+    text: '关闭后打开应用将直接进入日记，密码也会一并清除，仅本人可见的保护会失效。\n' +
+      '为确认是本人操作，下一步需要输入一次当前密码。',
+    buttons: [
+      { label: '取消' },
+      {
+        label: '关闭密码', style: 'danger', onClick: function () {
+          // 说清"还要输一次密码"：不提前讲，用户点完发现跳到输密码页会以为出错了
+          showUnlock('clearPin');
+        }
+      }
+    ]
+  });
+}
+/**
+ * 密码行（「打开密码」/「修改密码」）的入口。标签只有两种、动作也是：
+ *
+ *   · 开关**开着** → 行写「修改密码」→ 先验旧密码（askChangePin 的 changePin 牌照），
+ *     通过后进设置流程换新密码。不先验，等于"拿到手机的人第一件事就是改密码"。
+ *   · 开关**关着** → 行写「打开密码」→ 分两种：
+ *       - 有密码（之前关过）→ 输一次原密码直接开回来，不必重设（enableLock 牌照）
+ *       - 没密码（从没设过）→ 进设置流程设一个（可随时「暂不设置」）
+ */
+function askChangePin() {
+  var m = Meta.data;
+  if (m.pinEnabled && m.pinHash) { showUnlock('changePin'); return; }  // 改密码：先验旧的
+  if (m.pinHash) { showUnlock('enableLock'); return; }                 // 打开密码：验一次开回来
+  showLock('setup');                                                   // 从没设过：直接设
+}
+/**
+ * 「验证后要做的事」的登记表。showUnlock 只认这几张牌照，
+ * 拿到牌照才在验证通过后执行对应动作 —— 避免验证成功却不知道该干嘛。
+ *
+ * clear = true 表示这次验证的**目的就是把密码删掉**（不是"暂停验证"）。
+ * 只有这张牌照被用上时，验证通过才会连 pinHash 一起清；
+ * 关掉开关那种"暂停验证"必须保留 pinHash，否则用户下次想开回来就得重设密码。
+ */
+var UNLOCK_INTENT = {
+  enableLock: enableLock,
+  disableLock: function (intent) { disableLock(intent); },
+  clearPin: function (intent) { clearPin(); disableLock(intent); },
+  changePin: function () { showLock('setup'); }
+};
+/**
+ * 打开"输入密码"锁屏。
+ * @param {string} onSuccess 验证通过后要执行的动作（UNLOCK_INTENT 的键）
+ * 同时把 State.lockCloseAfterVerify 打开，这样锁屏上会多出
+ * 「关闭密码」与「取消」两个出口 —— 用户无论在验证途中还是验证成功后，
+ * 都能明确地选"我要关"还是"算了"。
+ */
+function showUnlock(onSuccess) {
+  State.lockCloseAfterVerify = true;
+  showLock('verify', onSuccess);
+}
+/**
+ * 关闭验证。密码本身**保留**（pinHash 不动），只关开关 ——
+ * 下次想开回来直接输一次原密码即可，不必重设。
+ *
+ * @param intent 'change' = 走的是「修改密码」那条路。那种情况下开关状态没被动过，
+ *               不能因为关了就说成"已关闭"（用户只是改了个密码）。
+ */
+function disableLock(intent) {
+  Meta.save({ pinEnabled: false });
+  renderSettings();      // 当面把整行标注改成「未设置」
+  toast(intent === 'change' ? '密码已更新，验证保持关闭' : '已关闭密码验证，打开应用将直接进入');
+}
+/**
+ * 彻底不设密码：清掉密码本体 + 关开关。
+ * 两个出口都用它：① 验证通过后「关闭密码」；② 忘记密码 → 清空数据。
+ */
+function clearPin() {
+  Meta.save({ pinHash: '', pinSalt: '', pinEnabled: false });
+}
+function lockShake(msg) {
+  var d = $('#lockDots');
+  d.classList.add('shake');
+  lockSetSub(msg);
+  setTimeout(function () { d.classList.remove('shake'); }, 400);
+  State.pinBuffer = '';
+  renderLockDots();
+}
+function pinPress(k) {
+  if (k === 'del') {
+    State.pinBuffer = State.pinBuffer.slice(0, -1);
+    renderLockDots();
+    return;
+  }
+  if (State.pinBuffer.length >= 6) return;
+  State.pinBuffer += k;
+  renderLockDots();
+
+  if (State.pinBuffer.length === 6) {
+    var pin = State.pinBuffer;
+    if (State.lockMode === 'verify') {
+      setTimeout(function () {
+        Lock.verify(pin).then(function (ok) {
+          if (!ok) { lockShake('密码不正确，请重试'); return; }
+          var action = State.lockOnSuccess;
+          State.lockOnSuccess = null;
+          // 这次验证的真正意图（开 / 关 / 改）要在 hideLock 之前取出来 ——
+          // hideLock 会重置 lockSource，晚了就读不到了
+          var intent = State.lockSource;
+          hideLock();
+          State.hiddenAt = 0;
+          // 该干嘛完全由 onSuccess 这张牌照决定：
+          //   clearPin   = 这次就是要"删掉密码"（区别于 disableLock 的"暂停验证"）
+          //   disableLock= 关掉验证但把密码留着，下次能直接开回来
+          // 别在这里用 lockCloseAfterVerify 反推意图 —— 那个标记对两条路都是 true。
+          var run = UNLOCK_INTENT[action];
+          if (run) run(intent);
+        });
+      }, 120);
+    } else if (State.lockMode === 'setup') {
+      setTimeout(function () {
+        State.tempPin = pin;
+        State.pinBuffer = '';
+        State.lockMode = 'confirm';
+        $('#lockTitle').textContent = '再次输入确认';
+        lockSetSub('请再输入一次');
+        renderLockDots();
+      }, 130);
+    } else {
+      setTimeout(function () {
+        if (pin === State.tempPin) {
+          var intent = State.lockSource;
+          /**
+           * 收尾时按**进入这次设置流程的意图**决定开关。
+           *
+           * intent 必须在动作前读：`showLock('setup')` 有两个来源
+           *   · 'first'  —— 从没设过密码，设完就该是"已设置"（Lock.setPin 会打开开关）
+           *   · 'change' —— 只是改密码，**开关保持原样**：改密码不能顺手改变
+           *                 保护是开着的还是关着的。
+           * Lock.setPin() 是异步的（要 await 一次 WebCrypto 哈希），而 hideLock()
+           * 会把 lockSource 重置成 'verify'，等它回来再读就读不到了 —— 所以提前存一份。
+           *
+           * ★ 这里别写 `if (intent === 'change') pinEnabled = false`。
+           *   刚踩过：用户开着验证去改密码，改完验证被静默关掉了（开关看着"自己灭了"）。
+           *   正确条件是"改密码 **且原本就是关的** 才保持关闭"。
+           */
+          var keepOff = intent === 'change' && !Meta.data.pinEnabled;
+          Lock.setPin(pin).then(function () {
+            if (keepOff) Meta.save({ pinEnabled: false });
+            hideLock();
+            renderSettings();
+            toast(intent === 'change' ? '密码已更新' : '密码已设置');
+          });
+        } else {
+          State.lockMode = 'setup';
+          State.tempPin = '';
+          $('#lockTitle').textContent = '设置 6 位数字密码';
+          lockSetSub('两次输入不一致，请重新设置');
+          lockShake('两次输入不一致，请重新设置');
+        }
+      }, 130);
+    }
+  }
+}
+
+/* ==========================================================================
+   8. 主题
+   ========================================================================== */
+function applyTheme(theme) {
+  var dark = theme === 'dark';
+  $('#app').setAttribute('data-theme', dark ? 'dark' : 'light');
+  document.querySelector('meta[name=theme-color]').setAttribute('content', dark ? '#0F0F0F' : '#EDEDED');
+  syncNativeStatusBar(dark);   // App 内同步系统状态栏；浏览器里是空操作
+}
+
+/* ==========================================================================
+   9. 事件绑定
+   ========================================================================== */
+function bindEvents() {
+  /* --- 封面页：停一下就自动进入，点击/按键只是"提前进入" --- */
+  $('#screen-cover').addEventListener('click', enterApp);
+  document.addEventListener('keydown', function (ev) {
+    if (!$('#screen-cover').classList.contains('show')) return;
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); enterApp(); }
+  });
+
+  /* --- 主导航（标签栏 / 左侧栏同一套按钮） --- */
+  $('#tabbar').addEventListener('click', function (ev) {
+    var btn = ev.target.closest('.tab');
+    if (!btn) return;
+    var name = btn.getAttribute('data-tab');
+    // 点底部栏就等于"我在用底部栏导航"，来源标记一律改回 tab —— 返回首页随之收起
+    State.tabVia = 'tab';
+    if (name === State.tab) {
+      var sc = $(TAB_PANES[State.tab] + ' .scroll');
+      if (sc && sc.scrollTo) sc.scrollTo({ top: 0, behavior: 'smooth' });
+      syncTabBack();
+      return;
+    }
+    switchTab(name, 'tab');
+  });
+  $('#fabWrite').addEventListener('click', function () { openComposer(null); });
+  $('#deskWrite').addEventListener('click', function () { openComposer(null); });
+
+  /* --- 首页磁贴 --- */
+  $('#deskTiles').addEventListener('click', function (ev) {
+    var t = ev.target.closest('.tile');
+    if (!t) return;
+    var go = t.getAttribute('data-go');
+    if (go === 'timeline' || go === 'gallery' || go === 'mine') switchTab(go, 'tile');
+    else if (go === 'search') openSearch();
+    else if (go === 'stats') { renderStats(); showScreen('#screen-stats'); }
+    else if (go === 'backup') pickExportFormat();
+  });
+
+  /* --- 时间线导航（写日记 / 设置） --- */
+  bindCameraButton($('#btnCamera'));
+  $('#btnSettings').addEventListener('click', function () { switchTab('mine'); });
+
+  /* --- 首页磁贴进来的标签页：左上角「返回首页」（点底部栏进来时是藏着的） --- */
+  ['#btnTimelineHome', '#btnGalleryHome', '#btnMineHome'].forEach(function (sel) {
+    var b = $(sel);
+    if (b) b.addEventListener('click', function () { switchTab('home', 'tab'); });
+  });
+
+  $('#btnCover').addEventListener('click', function (ev) {
+    // 别冒泡：封面父层有"点开大图"的处理，不拦住会一次点出两个东西
+    ev.stopPropagation();
+    pickSingle(function (file) {
+      ImageProc.compress(file).then(function (r) {
+        return Store.putImage({ id: 'cover', entryId: '__profile__', w: r.w, h: r.h, size: r.blob.size, blob: r.blob });
+      }).then(function () {
+        urlCache.delete('cover');
+        var img = $('#coverImg');
+        imageURL('cover').then(function (u) { img.src = u; img.style.display = 'block'; });
+        toast('封面已更新');
+      });
+    });
+  });
+
+  /* --- 相册：点击进入查看器（使用全局图片序列，可跨日记连续滑动） --- */
+  $('#galInner').addEventListener('click', function (ev) {
+    var a = ev.target.closest('[data-gidx]');
+    if (!a) return;
+    openViewerByIds(State.galleryList, Number(a.getAttribute('data-gidx')));
+  });
+
+  /* --- 搜索 --- */
+  $('#btnSearchBack').addEventListener('click', function () { hideScreen('#screen-search'); });
+  $('#searchInput').addEventListener('input', renderSearch);
+  $('#btnSearchClear').addEventListener('click', function () {
+    $('#searchInput').value = '';
+    renderSearch();
+    $('#searchInput').focus();
+  });
+  $('#searchResults').addEventListener('click', function (ev) {
+    var hit = ev.target.closest('[data-jump]');
+    if (hit) gotoPost(hit.getAttribute('data-jump'));
+  });
+
+  /* --- 统计 --- */
+  $('#btnStatsBack').addEventListener('click', function () { hideScreen('#screen-stats'); });
+
+  /* 时间线委托事件 */
+  var tl = $('#timeline');
+  tl.addEventListener('click', function (ev) {
+    var ph = ev.target.closest('.ph');
+    if (ph) {
+      openViewer(ph.getAttribute('data-view'), Number(ph.getAttribute('data-index')));
+      return;
+    }
+    // 「更多 / 收起」优先于其它分支，避免同时命中卡片长按或更多菜单
+    var exp = ev.target.closest('[data-expand]');
+    if (exp) { ev.stopPropagation(); togglePostText(exp); return; }
+    var more = ev.target.closest('.post-more');
+    if (more) { openPostMenu(more.getAttribute('data-more')); }
+  });
+  bindLongPress(tl, '.post', function (el) { openPostMenu(el.getAttribute('data-id')); });
+
+  /* --- 时间线封面 / 头像：点击可打开大图（和微信一致） ---
+     绑在 .cover 容器上而不是 img 上：没设封面时 img 是 display:none（点不到），
+     绑容器才能顺带给出「还没设置背景图」的提示。
+     区里的「更换封面」按钮自己会 stopPropagation，不会连带触发预览。 */
+  $('.cover').addEventListener('click', function () { openProfileImage('cover'); });
+  $('#meAvatar').addEventListener('click', function () { openProfileImage('avatar'); });
+  $('#meName').addEventListener('click', function () { openProfileImage('avatar'); });
+
+  /* --- 时间线顶部下拉：滚到顶后再下拉，直接回到最上方并给一次回弹（微信手势） --- */
+  bindPullToTop($('#homeScroll'));
+
+  /* --- 发布页 --- */
+  $('#btnCancelCompose').addEventListener('click', function () {
+    if ($('#composerText').value.trim() || State.draftImages.length) {
+      openDialog({
+        title: '放弃这次编辑？',
+        text: '已输入的内容不会被保存。',
+        buttons: [
+          { label: '继续编辑' },
+          {
+            label: '放弃', style: 'danger', onClick: function () {
+              // 仅释放本次新加的、尚未入库的图片
+              State.draftImages.forEach(function (it) {
+                if (it.isNew && urlCache.has(it.id)) {
+                  try { URL.revokeObjectURL(urlCache.get(it.id)); } catch (e) {}
+                  urlCache.delete(it.id);
+                }
+              });
+              State.draftImages = [];
+              State.editingId = null;
+              hideScreen('#screen-composer');
+              loadHome();   // 重绘时间线，保证被释放的图片重新取回
+            }
+          }
+        ]
+      });
+    } else {
+      hideScreen('#screen-composer');
+    }
+  });
+  $('#composerText').addEventListener('input', function () { autoGrow(); updateCounter(); updatePublishState(); });
+  $('#composerGrid').addEventListener('click', function (ev) {
+    if (ev.target.closest('#btnAddImage')) { pickImages(); return; }
+    var del = ev.target.closest('[data-del]');
+    if (del) {
+      // 只从草稿中移除；Blob URL 由全局缓存持有，提交时统一释放
+      State.draftImages.splice(Number(del.getAttribute('data-del')), 1);
+      renderComposerGrid();
+    }
+  });
+  $('#btnPublish').addEventListener('click', publish);
+
+  /* --- 我的（设置） --- */
+  $('#setAvatar').addEventListener('click', function () {
+    pickSingle(function (file) {
+      ImageProc.compress(file).then(function (r) {
+        return Store.putImage({ id: 'avatar', entryId: '__profile__', w: r.w, h: r.h, size: r.blob.size, blob: r.blob });
+      }).then(function () {
+        urlCache.delete('avatar');
+        renderProfile();
+        renderTimeline();
+        renderDesktop();
+        toast('头像已更新');
+      });
+    });
+  });
+  $('#setNickname').addEventListener('change', function () {
+    Meta.save({ nickname: this.value.trim() || '我' });
+    renderProfile(); renderTimeline(); renderDesktop();
+  });
+  $('#setSign').addEventListener('change', function () {
+    Meta.save({ sign: this.value.trim() });
+    renderProfile();
+  });
+  $('#setCover').addEventListener('click', function () {
+    var next = Meta.data.showCover === false;
+    Meta.save({ showCover: next });
+    renderSettings();
+    toast(next ? '下次打开会先显示封面页' : '已关闭封面页，打开直接进首页');
+  });
+  /* 「打开时验证密码」开关：只负责"开 / 关验证"这一件事。
+     关掉它 ≠ 关闭密码（密码还留着，下次输一次就能开回来）——
+     真正要删掉密码走下面那条独立的「关闭密码」。 */
+  $('#setLock').addEventListener('click', function () {
+    var m = Meta.data;
+    if (m.pinEnabled && m.pinHash) {
+      // 已经开着：点一下就是"关掉验证"，但仍要求验一次密码再关。
+      // 不提前讲清楚"还要输一次密码"，用户点完发现跳到输密码页会以为出错了。
+      openDialog({
+        title: '关闭密码验证？',
+        text: '关闭后打开应用将直接进入日记，仅本人可见的保护会失效。\n' +
+          '密码会保留，之后随时可以再开启；想彻底删掉密码请用下面的「关闭密码」。\n' +
+          '为确认是本人操作，下一步需要输入一次当前密码。',
+        buttons: [
+          { label: '取消' },
+          {
+            label: '关闭验证', style: 'danger', onClick: function () {
+              // 必须验一次密码才能关：
+              // 手机落在别人手里时，不能点两下就把隐私保护解掉。
+              showUnlock('disableLock');
+            }
+          }
+        ]
+      });
+      return;
+    }
+    // 开关是关的：点一下就是想打开 —— 动作与「打开密码」行完全一样，
+    // 直接复用 askChangePin，免得两条路各写一遍、哪天改歪一条。
+    askChangePin();
+  });
+  // 「打开密码」/「修改密码」：同一个入口，标签与动作由开关状态决定（见 askChangePin）
+  $('#setChangePin').addEventListener('click', askChangePin);
+  // 「关闭密码」：微信式的独立入口 —— 删掉密码本身，不只是把开关拨灰
+  $('#setClosePin').addEventListener('click', askClosePin);
+  $('#setTheme').addEventListener('click', function () {
+    var next = Meta.data.theme === 'dark' ? 'light' : 'dark';
+    Meta.save({ theme: next });
+    applyTheme(next);
+    renderSettings();
+  });
+  /* 离开后自动上锁：点整行弹选择面板。
+     原来是「点一下切下一档」，四档要循环点好几次才能看全有哪些选项，
+     手一抖还会滑过去，也看不出自己当前停在哪一档。 */
+  var AUTOLOCK_OPTS = [
+    { sec: 30, label: '30 秒' },
+    { sec: 60, label: '1 分钟' },
+    { sec: 300, label: '5 分钟' },
+    { sec: 0, label: '不自动上锁' }
+  ];
+  $('#setAutoLockRow').addEventListener('click', function () {
+    var cur = Meta.data.autoLockSec;
+    openSheet(AUTOLOCK_OPTS.map(function (o) {
+      return {
+        label: o.label + (o.sec === cur ? '（当前）' : ''),
+        onClick: function () {
+          Meta.save({ autoLockSec: o.sec });
+          renderSettings();
+          toast(o.sec ? '离开 ' + o.label + '后自动上锁' : '已关闭自动上锁');
+        }
+      };
+    }));
+  });
+  $('#setExport').addEventListener('click', pickExportFormat);
+  $('#setImport').addEventListener('click', pickImportFormat);
+  $('#fileImport').addEventListener('change', function () {
+    if (this.files && this.files[0]) importBackup(this.files[0], pendingImportFormat);
+    this.value = '';
+  });
+  $('#setClear').addEventListener('click', function () {
+    openDialog({
+      title: '清空全部日记？',
+      text: '所有文字与图片将被永久删除，无法恢复。建议先导出备份。',
+      buttons: [
+        { label: '取消' },
+        {
+          label: '仍要清空', style: 'danger', onClick: function () {
+            Store.clearAll().then(function () {
+              urlCache.forEach(function (u) { URL.revokeObjectURL(u); });
+              urlCache.clear();
+              return loadHome();
+            }).then(function () {
+              renderSettings();
+              toast('已清空全部日记');
+            });
+          }
+        }
+      ]
+    });
+  });
+
+  /* --- 图片查看器 ---
+     手势分两条路，靠当前缩放值分流：
+       · 未放大 → 单指左右拖动翻页（和改之前完全一样的手感）
+       · 已放大 → 单指拖动平移图片，图片拖到头了才允许翻页
+     缩放本身支持：双指捏合（触摸）、滚轮（桌面）、双击（触摸与鼠标通用）。
+     touch-action:none 写在 .viewer-track 上，否则浏览器会把双指手势抢去滚页面。 */
+  var vTrack = $('#viewerTrack');
+  var ZOOM_MAX = 6;                 // 最大放大倍数，再大就糊成马赛克了
+  var V_TAP = 10, V_TOGGLE = 2.5;   // 判定「点」而非「拖」的位移阈值 / 双击放大到的倍数
+  var vScale = 1, vTx = 0, vTy = 0; // 当前缩放与平移
+  var vPanning = false;             // 已放大时，本次手势是在拖图片
+  var vLastTap = 0;
+  var vPinch = null, vPinchScale = 1, vPinchTx = 0, vPinchTy = 0;
+  var vSx = 0, vSy = 0, vTx0 = 0, vTy0 = 0, vDragging = false;
+  var vLastX = 0, vLastY = 0, vLastDx = 0, vMoved = 0;
+
+  var vImg = function (i) { return $$('#viewerTrack img')[i == null ? State.viewerIndex : i] || null; };
+
+  /**
+   * 把缩放状态彻底归零。
+   * ⚠️ 必须同时重置 DOM 和下面这堆变量：它们活在本闭包里，**关掉查看器再打开是不会
+   *    自动复原的**（openViewerByIds 只是换了 track 的 innerHTML，新的 img 元素天然
+   *    没有 transform，可 vScale 还是上次那个值）。踩过的坑：捏合放大到 4.02 关掉、
+   *    重开，DOM 看着是 1x，但 vScale=4.02，于是**第一次双击被「取消放大」分支吃掉**，
+   *    用户得双击两次才有反应。
+   */
+  function vClear() {
+    vScale = 1; vTx = 0; vTy = 0;
+    vDragging = false; vPanning = false; vPinch = null;
+    vPinchScale = 1; vPinchTx = 0; vPinchTy = 0;
+    vLastDx = 0; vMoved = 0; vLastTap = 0;
+    vTx0 = 0; vTy0 = 0;
+  }
+
+  function viewerReset() {
+    $$('#viewerTrack .slide img').forEach(function (im) {
+      im.classList.remove('zoomed');
+      im.style.transition = 'none';
+      im.style.transform = '';
+    });
+    vTrack.style.transform = 'translateX(' + (-State.viewerIndex * 100) + '%)';
+    vClear();
+    State.viewerZoom = 1;
+  }
+  State.viewerReset = viewerReset;   // 登记给 moveViewer / 旋转重排使用
+
+  $('#viewerClose').addEventListener('click', closeViewer);
+
+  /** 把「围绕中心缩放」换算成 translate：中心不变 → 平移量缩放同倍即可 */
+  function vApplyScale(k) {
+    vTx = (vTx + vLastX - vTrack.offsetWidth / 2) * k + vTrack.offsetWidth / 2 - vLastX;
+    vTy = (vTy + vLastY - vTrack.offsetHeight / 2) * k + vTrack.offsetHeight / 2 - vLastY;
+  }
+
+  function vRender(anim) {
+    var im = vImg();
+    if (!im) return;
+    if (vScale <= 1.001) { vScale = 1; vTx = 0; vTy = 0; }   // 归位：不留"差一点点"的放大态
+    im.style.transition = anim ? 'transform .22s cubic-bezier(.3,.7,0,1)' : 'none';
+    im.style.transform = vScale === 1 ? ''
+      : 'translate(' + vTx.toFixed(1) + 'px,' + vTy.toFixed(1) + 'px) scale(' + vScale.toFixed(4) + ')';
+    im.classList.toggle('zoomed', vScale > 1);
+    State.viewerZoom = vScale;   // 供「3/7 · 2.5x」这类计数展示与旋转重排读取
+    updateViewerCount();
+  }
+
+  /** 按视图尺寸夹住平移量：图片不会被拖出屏幕留下大片黑边 */
+  function vClamp() {
+    var im = vImg();
+    if (!im || vScale <= 1) { vTx = 0; vTy = 0; return; }
+    var tr = vTrack.getBoundingClientRect();   // 查看器真实可视区（含 flex 后的高度）
+    var r = im.getBoundingClientRect();        // 含当前 transform，即放大后实际占位
+    var mx = Math.max(0, (r.width - tr.width) / 2), my = Math.max(0, (r.height - tr.height) / 2);
+    vTx = Math.min(mx, Math.max(-mx, vTx));
+    vTy = Math.min(my, Math.max(-my, vTy));
+  }
+
+  /** 双击 / 双指点：在 1x 与 2.5x 之间切换 */
+  function vToggleZoom(x, y) {
+    if (vScale > 1.001) { vScale = 1; vTx = 0; vTy = 0; }
+    else { vLastX = x; vLastY = y; vScale = V_TOGGLE; vTx = 0; vTy = 0; vApplyScale(vScale); vClamp(); }
+    vRender(true);
+  }
+
+  vTrack.addEventListener('touchstart', function (ev) {
+    vTrack.style.transition = 'none';
+    if (ev.touches.length === 2) {
+      vPanning = false; vDragging = false; vPinch = null;
+      var b0 = vImg(), r0 = b0 ? b0.getBoundingClientRect() : null;
+      vLastX = r0 ? r0.left + r0.width / 2 : vTrack.offsetWidth / 2;
+      vLastY = r0 ? r0.top + r0.height / 2 : vTrack.offsetHeight / 2;
+      vPinch = Math.hypot(ev.touches[0].clientX - ev.touches[1].clientX,
+                          ev.touches[0].clientY - ev.touches[1].clientY) || 1;
+      vPinchScale = vScale; vPinchTx = vTx; vPinchTy = vTy;
+      return;
+    }
+    if (ev.touches.length !== 1) return;
+    vSx = ev.touches[0].clientX; vSy = ev.touches[0].clientY;
+    vLastDx = 0; vMoved = 0;
+    vDragging = true;
+    vPanning = vScale > 1.001;
+    if (vPanning) { vTx0 = vTx; vTy0 = vTy; }
+  }, { passive: true });
+
+  vTrack.addEventListener('touchmove', function (ev) {
+    if (vPinch && ev.touches.length >= 2) {
+      var d = Math.hypot(ev.touches[0].clientX - ev.touches[1].clientX,
+                         ev.touches[0].clientY - ev.touches[1].clientY);
+      vScale = Math.min(ZOOM_MAX, Math.max(1, vPinchScale * d / vPinch));
+      // 以两指中点为焦点缩放：焦点不动 → 焦点之外的距离按缩放比同比放大
+      var mx = (ev.touches[0].clientX + ev.touches[1].clientX) / 2;
+      var my = (ev.touches[0].clientY + ev.touches[1].clientY) / 2;
+      vTx = mx - (mx - vPinchTx) * (vScale / vPinchScale);
+      vTy = my - (my - vPinchTy) * (vScale / vPinchScale);
+      vLastX = mx; vLastY = my;
+      vClamp(); vRender(false);
+      return;
+    }
+    if (!vDragging) return;
+    var dx = ev.touches[0].clientX - vSx;
+    var dy = ev.touches[0].clientY - vSy;
+    vMoved = Math.max(vMoved, Math.abs(dx), Math.abs(dy));
+    if (vPanning) {                       // 已放大：拖的是图片本身
+      vTx = vTx0 + dx; vTy = vTy0 + dy;
+      vClamp(); vRender(false);
+      return;
+    }
+    // 未放大：横向才翻页，纵向交给别的手势（保持原逻辑）
+    if (Math.abs(dy) > Math.abs(dx)) { vDragging = false; return; }
+    vLastDx = dx;
+    vTrack.style.transform = 'translateX(' + (-State.viewerIndex * 100 + dx / vTrack.offsetWidth * 100) + '%)';
+  }, { passive: true });
+
+  vTrack.addEventListener('touchend', function (ev) {
+    if (vPinch) {
+      if (ev.touches.length < 2) {
+        vPinch = null;
+        if (vScale <= 1.02) { vScale = 1; vTx = 0; vTy = 0; vRender(true); }
+      }
+      return;
+    }
+    if (!vDragging) return;
+    vDragging = false;
+    if (vPanning) {                       // 拖动结束：图片已经在 vClamp 允许的范围内
+      if (vMoved < V_TAP) {
+        var t = Date.now();
+        if (t - vLastTap < 300) { vToggleZoom(ev.changedTouches[0].clientX, ev.changedTouches[0].clientY); vLastTap = 0; }
+        else vLastTap = t;
+      }
+      return;
+    }
+    vTrack.style.transition = '';
+    if (Math.abs(vLastDx) > 50) {
+      if (vLastDx < 0 && State.viewerIndex < State.viewerList.length - 1) State.viewerIndex++;
+      else if (vLastDx > 0 && State.viewerIndex > 0) State.viewerIndex--;
+    }
+    moveViewer(State.viewerIndex);
+    updateViewerCount();
+  }, { passive: true });
+
+  /* 桌面档：滚轮缩放 + 拖拽平移 + 双击切换 */
+  vTrack.addEventListener('wheel', function (ev) {
+    ev.preventDefault();
+    var im = vImg();
+    if (!im) return;
+    var r = im.getBoundingClientRect();
+    vLastX = r.left + r.width / 2; vLastY = r.top + r.height / 2;
+    var k = ev.deltaY < 0 ? 1.15 : 1 / 1.15;
+    var next = Math.min(ZOOM_MAX, Math.max(1, vScale * k));
+    vApplyScale(next / vScale);
+    vScale = next;
+    vClamp(); vRender(false);
+  }, { passive: false });
+
+  vTrack.addEventListener('mousedown', function (ev) {
+    if (vScale <= 1.001 || ev.target.tagName !== 'IMG') return;
+    ev.preventDefault();
+    vSx = ev.clientX; vSy = ev.clientY; vTx0 = vTx; vTy0 = vTy;
+    function mv(e2) {
+      vTx = vTx0 + (e2.clientX - vSx); vTy = vTy0 + (e2.clientY - vSy);
+      vClamp(); vRender(false);
+    }
+    function up() {
+      document.removeEventListener('mousemove', mv);
+      document.removeEventListener('mouseup', up);
+    }
+    document.addEventListener('mousemove', mv);
+    document.addEventListener('mouseup', up);
+  });
+
+  /* 桌面档的双击统一由原生 dblclick 处理。
+     这里**不要**再在 mouseup 里做「点按切换」—— 一次真实双击会先发两组
+     mousedown/mouseup 再发 dblclick，两处都接就会切三次（1→2.5→1→2.5），
+     双击等于没反应。触摸端的双击检测不受影响：它在 touchend 里，且被 vPanning 门控。 */
+  vTrack.addEventListener('dblclick', function (ev) {
+    if (ev.target.tagName !== 'IMG') return;
+    vToggleZoom(ev.clientX, ev.clientY);
+  });
+
+  /* --- 屏幕旋转 / 窗口尺寸变化 ---
+     竖屏转横屏时 WebView 只改视口尺寸、不重载页面（AndroidManifest 里
+     configChanges 已包含 orientation），所以布局会跟着媒体查询自己变，
+     但**查看器里的缩放平移是按旧尺寸算的**，必须重算：
+       · 已放大的图片按新视口重新夹取，免得转到横屏后图片被卡在屏幕外
+       · 正在编辑的发布页文本框按新高度重新量一次
+     延后 260ms：旋转动画期间 innerHeight 还没稳定，立刻量会得到旧值。 */
+  function onViewportChange() {
+    setTimeout(function () {
+      if ($('#viewer').classList.contains('show') && State.viewerReset) State.viewerReset();
+      if ($('#screen-composer').classList.contains('active')) autoGrow();
+      // 屏幕变宽/变窄会改变正文折行数，折叠判定要跟着重量（签名里含宽度，会自然重算）
+      syncPostFold($('#timeline'));
+    }, 260);
+  }
+  window.addEventListener('resize', onViewportChange);
+  if (window.screen && window.screen.orientation && window.screen.orientation.addEventListener) {
+    window.screen.orientation.addEventListener('change', onViewportChange);
+  }
+  window.addEventListener('orientationchange', onViewportChange);
+  document.addEventListener('keydown', function (ev) {
+    if (!$('#viewer').classList.contains('show')) return;
+    if (ev.key === 'Escape') closeViewer();
+    if (ev.key === 'ArrowRight' && State.viewerIndex < State.viewerList.length - 1) { State.viewerIndex++; moveViewer(State.viewerIndex); updateViewerCount(); }
+    if (ev.key === 'ArrowLeft' && State.viewerIndex > 0) { State.viewerIndex--; moveViewer(State.viewerIndex); updateViewerCount(); }
+  });
+
+  /* --- 遮罩 --- */
+  // 只有「按下点就在遮罩上」的点击才关闭，避免长按弹面板后松手
+  // 产生的那次 click（目标已变成新出现的遮罩）把面板立刻关掉
+  var maskDownOnSelf = false;
+  $('#mask').addEventListener('pointerdown', function (ev) { maskDownOnSelf = (ev.target === this); });
+  $('#mask').addEventListener('click', function (ev) {
+    if (ev.target === this && maskDownOnSelf) closeMask();
+  });
+
+  /* --- 文件选择 --- */
+  /* 注意：必须先把 files 拷成真数组，再清 this.value。
+     input.value 一被清空，那个 FileList 会**当场变空**（它是活的），
+     后面再 slice 就一张都拿不到 —— 症状是"选了图但草稿里没有"。 */
+  $('#filePicker').addEventListener('change', function () {
+    var files = Array.prototype.slice.call(this.files || []);
+    this.value = '';
+    var cb = multiCb; multiCb = null;
+    if (!files.length) return;   // 用户取消了，什么都不做（也不进发布页）
+    if (cb) cb();                // 先开页：openComposer 会把草稿清空
+    addImages(files);            // 再把刚选的图压进草稿
+  });
+  $('#fileCamera').addEventListener('change', function () {
+    var files = Array.prototype.slice.call(this.files || []);
+    this.value = '';
+    var cb = cameraCb; cameraCb = null;
+    if (!files.length) return;
+    if (cb) cb();
+    addImages(files);
+  });
+  $('#filePickerSingle').addEventListener('change', function () {
+    var file = (this.files && this.files[0]) || null;
+    this.value = '';
+    if (file && singleCb) singleCb(file);
+    singleCb = null;
+  });
+
+  /* --- 锁屏键盘 --- */
+  $('#keypad').addEventListener('click', function (ev) {
+    var btn = ev.target.closest('button[data-k]');
+    if (!btn) return;
+    pinPress(btn.getAttribute('data-k'));
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (!$('#screen-lock').classList.contains('show')) return;
+    if (/^[0-9]$/.test(ev.key)) pinPress(ev.key);
+    if (ev.key === 'Backspace') pinPress('del');
+  });
+  /* 锁屏 footer 的三个出口。用「离开时做什么」来区分，而不是靠记哪条入口进来的：
+     · setup         → 「暂不设置」/「取消」，什么都不改
+     · verify + 关闭入口 → 「关闭密码」删密码、「取消」保持原样
+     · verify + 开密码   → 只有「取消」  */
+  $('#lockSkip').addEventListener('click', function () {
+    // 首次设置时点「暂不设置」：密码是可选功能，不开启验证
+    Meta.save({ pinEnabled: false });
+    hideLock();
+    renderSettings();
+    toast('已跳过，密码功能可在「我的 → 打开时验证密码」随时开启');
+  });
+  // 「取消」：不动任何状态，原样退出。用户看到 "保持开启 / 保持关闭" 的明确反馈，
+  // 就不必怀疑自己是不是误操作了（原来这条路上没有任何出口，只能反复输密码）
+  $('#lockCancel').addEventListener('click', function () {
+    var wasOn = Meta.data.pinEnabled;
+    hideLock();
+    toast(wasOn ? '已取消，密码验证保持开启' : '已取消');
+  });
+  // 「关闭密码」：已经站在锁屏上、心里就是要关 —— 现在关掉，不必再输一遍 6 位数字。
+  // 密码本体一起清掉（clearPin），标注立刻变「未设置」——用户要的就是"看得见关掉了"。
+  $('#lockOff').addEventListener('click', function () {
+    clearPin();
+    hideLock();
+    renderSettings();
+    toast('已关闭密码，打开应用将直接进入');
+  });
+  $('#lockForgot').addEventListener('click', function () {
+    openDialog({
+      title: '忘记密码',
+      text: '日记只保存在本机，密码无法找回。如确认忘记，可清空本地数据后重新开始（已导出的备份文件不受影响）。',
+      buttons: [
+        { label: '取消' },
+        {
+          label: '清空数据', style: 'danger', onClick: function () {
+            Store.clearAll().then(function () {
+              urlCache.forEach(function (u) { URL.revokeObjectURL(u); });
+              urlCache.clear();
+              clearPin();          // 密码本体 + 开关一起清，彻底回到"未设置"
+              hideLock();
+              return loadHome();
+            }).then(function () { toast('已清空，可重新设置密码'); });
+          }
+        }
+      ]
+    });
+  });
+
+  /* --- 后台自动上锁 --- */
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      State.hiddenAt = Date.now();
+    } else if (Meta.data.pinEnabled && Meta.data.pinHash && State.hiddenAt && Meta.data.autoLockSec > 0) {
+      if (Date.now() - State.hiddenAt > Meta.data.autoLockSec * 1000) showLock('verify');
+      State.hiddenAt = 0;
+    }
+  });
+
+  /* --- App 内：接管系统返回键（浏览器里是空操作） --- */
+  bindNativeBackButton();
+}
+
+/* 文件选择辅助
+   —— 选择器必须在用户手势里打开，所以「选完再进发布页」这种顺序只能靠回调实现，
+      不能先 openComposer 再 .click()（跨了异步就没手势授权了）。 */
+var singleCb = null;
+var multiCb = null;      // 多选相册：选完之后要做什么（时间线相机的入口用它带出发布页）
+var cameraCb = null;     // 拍照：同上
+function pickImages(cb) { multiCb = cb || null; $('#filePicker').click(); }
+function pickCamera(cb) { cameraCb = cb || null; $('#fileCamera').click(); }
+function pickSingle(cb) { singleCb = cb; $('#filePickerSingle').click(); }
+
+/* 长按/更多菜单 */
+function openPostMenu(id) {
+  var e = State.entries.filter(function (x) { return x.id === id; })[0];
+  if (!e) return;
+  openSheet([
+    { label: '编辑这篇日记', onClick: function () { openComposer(e); } },
+    { label: '查看文章详情', onClick: function () { showDetail(e); } },
+    {
+      label: '删除', danger: true, onClick: function () {
+        openDialog({
+          title: '删除这篇日记？',
+          text: '删除后无法恢复。',
+          buttons: [
+            { label: '取消' },
+            {
+              label: '删除', style: 'danger', onClick: function () {
+                (e.images || []).forEach(function (i) { urlCache.delete(i); });
+                Store.deleteEntryCascade(id).then(function () {
+                  return loadHome();
+                }).then(function () { toast('已删除'); });
+              }
+            }
+          ]
+        });
+      }
+    }
+  ]);
+}
+/**
+ * 查看文章详情。
+ * 之前这里用 textContent + \n，而 HTML 会把空白折叠掉 —— 所以时间与正文全挤成一行。
+ * 现在统一走 TextFmt.toHtml（转义 + 换行转 <br>），并按"元信息 / 正文"分段，段落之间空一行。
+ */
+function showDetail(e) {
+  var meta = [TimeFmt.full(e.createdAt)];
+  if (e.updatedAt) meta.push('修改于 ' + TimeFmt.full(e.updatedAt));
+  if (e.images && e.images.length) meta.push('共 ' + e.images.length + ' 张图片');
+  meta.push('字数 ' + (e.text ? e.text.length : 0) + ' 字');
+
+  var body = e.text ? TextFmt.normalize(e.text) : '（这篇只有图片）';
+  openDialog({
+    title: '日记详情',
+    text: meta.join('\n') + '\n\n' + body,
+    buttons: [{ label: '关闭', style: 'primary' }]
+  });
+}
+
+/* ==========================================================================
+   10. 启动
+   流程：封面页 →（仅当自己设过密码时）锁屏验证 → 首页
+   密码是可选功能：不设置就直接进日记，想用密码再去「我的 → 打开时验证密码」开启
+   ========================================================================== */
+/** 封面之后：有密码才验证，没密码直接进首页 */
+function afterCover() {
+  switchTab('home');
+  if (Meta.data.pinEnabled && Meta.data.pinHash) showLock('verify');
+}
+function boot() {
+  Meta.load();
+  applyTheme(Meta.data.theme);
+  bindEvents();
+  bindScrollTopOnNav();
+  switchTab('home');
+  // 拍照过程中 App 被回收的话，结果要等 store 就绪后再补进发布页。
+  // store 没有「就绪」标志可查，所以把「就绪后做什么」作为回调传进去，
+  // 在下面 Store.init() 完成后真正执行。
+  var pendingRestore = null;
+  bindNativeCameraRestore(function (run) { pendingRestore = run; });
+
+  Store.init().then(function () {
+    if (Store.mode !== 'idb') {
+      toast('当前环境无法使用 IndexedDB，已切换到降级存储', 3200);
+    }
+    return loadHome();
+  }).then(function () {
+    if (Meta.data.showCover === false) afterCover();
+    else showCover();
+    $('#app').classList.remove('booting');
+    if (pendingRestore) pendingRestore();
+  }).catch(function (err) {
+    console.error(err);
+    $('#app').classList.remove('booting');
+    toast('初始化失败：' + err.message);
+  });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
+}
+
+/* 供控制台调试 / 自动化测试使用 */
+window.__diary__ = {
+  Store: Store, Meta: Meta, State: State, ImageProc: ImageProc, TimeFmt: TimeFmt, TextFmt: TextFmt, Lock: Lock,
+  loadHome: loadHome, switchTab: switchTab, enterApp: enterApp, renderStats: renderStats,
+  renderSettings: renderSettings, renderProfile: renderProfile,
+  syncTabBack: syncTabBack,
+  Native: Native, handleBackKey: handleBackKey, applyTheme: applyTheme,
+  showLock: showLock, hideLock: hideLock, exportBackup: exportBackup, confirmExport: confirmExport,
+  enableLock: enableLock, disableLock: disableLock, clearPin: clearPin,
+  showUnlock: showUnlock, askClosePin: askClosePin, askChangePin: askChangePin,
+  pickExportFormat: pickExportFormat, pickImportFormat: pickImportFormat, exportTextBackup: exportTextBackup,
+  buildTextBackup: buildTextBackup, parseTextBackup: parseTextBackup, doImportText: doImportText,
+  parseBackupText: parseBackupText, importBackup: importBackup,
+  showCover: showCover, togglePostText: togglePostText, showDetail: showDetail,
+  openDialog: openDialog, closeMask: closeMask, openProfileImage: openProfileImage,
+  publishCore: publishCore, buildBackup: buildBackup, backupFileName: backupFileName,
+  openComposer: openComposer, renderComposerGrid: renderComposerGrid, addImages: addImages,
+  openCameraSheet: openCameraSheet, bindCameraButton: bindCameraButton,
+  pickImages: pickImages, pickCamera: pickCamera,
+  CAMERA_LONG_MS: CAMERA_LONG_MS, COVER_BASE_H: COVER_BASE_H,
+  /**
+   * 测试专用：不走输入框，直接以纯文本发一篇**新**日记。
+   * 必须强制清掉 editingId —— 否则会覆盖上一篇（编辑态是全局的），把后面的计数断言全带偏。
+   */
+  publishText: function (text) {
+    State.editingId = null;
+    State.draftImages = [];
+    return publishCore(TextFmt.normalize(text).trim(), []);
+  },
+  POST_FOLD_LINES: POST_FOLD_LINES, COVER_HOLD_MS: COVER_HOLD_MS
+};
+
+})();
+</script>
+</body>
+</html>

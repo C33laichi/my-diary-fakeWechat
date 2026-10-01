@@ -1,0 +1,35 @@
+{
+  "name": "wechat-diary-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "「我的日记」Capacitor 移动端壳工程：把 ../index.html 打成 Android / iOS 安装包",
+  "scripts": {
+    "preflight": "node tools/preflight.mjs",
+    "icons": "python tools/make_icons.py",
+    "sync:web": "node sync.mjs",
+    "sync": "node sync.mjs && node tools/preflight.mjs && cap sync",
+    "open:android": "node sync.mjs && node tools/preflight.mjs && cap sync android && cap open android",
+    "apk:debug": "node tools/preflight.mjs && node setup-android.mjs",
+    "apk:release": "node tools/preflight.mjs && node setup-android.mjs --release",
+    "ios:check": "node tools/ios-prepare.mjs --check",
+    "ios:prepare": "node tools/ios-prepare.mjs",
+    "ios:open": "node tools/ios-prepare.mjs --open",
+    "ios:archive": "node tools/ios-prepare.mjs --archive"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/camera": "^8.2.4",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/filesystem": "^8.1.3",
+    "@capacitor/ios": "^8.5.2",
+    "@capacitor/share": "^8.0.1",
+    "@capacitor/status-bar": "^8.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2"
+  }
+}

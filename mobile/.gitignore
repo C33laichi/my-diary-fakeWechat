@@ -1,0 +1,15 @@
+node_modules/
+www/
+
+# 构建产物
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+android/app/release/
+
+# 签名文件绝对不要提交
+*.keystore
+*.jks
+
+.capacitor/
