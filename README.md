@@ -53,7 +53,7 @@
 
 ## 使用
 
-**③ 安卓安装包** —— 不想自己打包就用现成的：
+**安卓安装包** —— 不想自己打包就用现成的：
 
 请在release中下载
 
@@ -120,11 +120,6 @@ node verify_fold.mjs         #  14 项：「更多 / 收起」的折叠判定
 这些脚本积累了几个**真实踩过的坑**，都写在了注释里（`overflow:hidden` 会让被平移的
 轮播子树失去命中测试、`addImages` 曾不返回 Promise、折叠判定曾把逻辑行当视觉行……）。
 改代码前建议先读一遍，改完跑一遍。
-
-## 浏览器支持
-
-Chrome / Edge / Safari / Firefox 的现代版本，以及 Android WebView、iOS WKWebView。
-依赖 IndexedDB（不可用时自动降级）与 Canvas（用于图片压缩）。
 
 ## 许可
 
