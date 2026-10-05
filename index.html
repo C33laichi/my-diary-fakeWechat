@@ -713,7 +713,10 @@ input,textarea{font-family:inherit}
 .heat-c.l2{background:var(--green);opacity:.52}
 .heat-c.l3{background:var(--green);opacity:.76}
 .heat-c.l4{background:var(--green)}
-.heat-legend{display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:12px;font-size:11px;color:var(--sub)}
+.heat-legend{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:12px;font-size:11px;color:var(--sub)}
+/* 每档一个竖排小单元：色块在上、字数在正下方 —— 数字不再和色块挤在一行里分不清归属 */
+.heat-legend .hl-grid{display:flex;gap:8px}
+.heat-legend .hl{display:flex;flex-direction:column;align-items:center;gap:3px}
 
 /* 节奏段的分布图复用 .bars 结构，只是矮一档；最高的一根不透明、其余半透明 */
 .bars.sm{height:76px;gap:2px}
@@ -2811,10 +2814,13 @@ function renderStats() {
       '<div class="chart-card">' +
         '<div class="chart-title">写作热力图<span>' + escapeHtml(heatNote) + '</span></div>' +
         heatmapHtml(byDay) +
-        '<div class="heat-legend"><span>0</span><i class="heat-c"></i>' +
-          '<span>1-99</span><i class="heat-c l1"></i><span>100-299</span><i class="heat-c l2"></i>' +
-          '<span>300-699</span><i class="heat-c l3"></i><span>700+</span><i class="heat-c l4"></i>' +
-          '<span>字</span></div>' +
+        '<div class="heat-legend"><span>字数</span><div class="hl-grid">' +
+          '<span class="hl"><i class="heat-c"></i>0</span>' +
+          '<span class="hl"><i class="heat-c l1"></i>1-99</span>' +
+          '<span class="hl"><i class="heat-c l2"></i>100-299</span>' +
+          '<span class="hl"><i class="heat-c l3"></i>300-699</span>' +
+          '<span class="hl"><i class="heat-c l4"></i>700+</span>' +
+        '</div></div>' +
       '</div>' +
       '<div class="stat-cards">' +
         '<div class="stat-card"><div class="stat-num">' + list.length + '<small>篇</small></div><div class="stat-cap">日记总数</div></div>' +
