@@ -604,6 +604,15 @@ try {
   // 图例里的色块也是 .heat-c，所以上面两条一律限定 .heat-grid 内，别把图例算成格子
   check('今天那一格亮着', st.heatLit === 1, `${st.heatLit} 格亮着`);
   check('热力图标题如实报篇数', /近一年 1 篇/.test(st.heatNote), st.heatNote);
+  // ★ 分档必须是绝对字数（1/100/300/700），不是相对四分位 —— 相对分档在只有 1 篇时
+  //   会给 39 字的格子中等深浅，颜色对不上字数，用户一眼就看出"不精准"
+  check('热力图图例标注字数分档', st.text.includes('1-99') && st.text.includes('700+'),
+    st.text.match(/1-99|100-299|300-699|700+/g) ? st.text.match(/1-99|100-299|300-699|700+/g).join('/') : '无标注');
+  // 手机上没有 hover —— 点格子要能弹出那天写了多少
+  await cdp.evalJs(`(() => { const c = document.querySelector('.heat-grid .heat-c.l1'); if (c) c.click(); return !!c; })()`);
+  const heatToast = await cdp.evalJs(`(() => { const t = document.getElementById('toast');
+    return { show: t.classList.contains('show'), text: t.textContent }; })()`);
+  check('点热力图格子弹出那天信息', heatToast.show && /月\d+日.*\d+ 字/.test(heatToast.text), heatToast.text);
   // ★ 写作时段：24 根（一天）+ 7 根（一周），共用一张卡片
   check('时段图 = 24 + 7 根柱', st.slotBars === 31, `${st.slotBars} 根`);
   check('样本不足时不硬说「最多：X 点」', /再写几篇/.test(st.rhythmNote), st.rhythmNote);

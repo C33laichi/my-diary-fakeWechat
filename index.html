@@ -708,6 +708,7 @@ input,textarea{font-family:inherit}
 /* 月份标签固定 12px 宽并允许溢出：不固定的话文字会把整列撑宽，格子就散了 */
 .heat-m{flex:none;width:12px;height:14px;line-height:14px;font-size:10.5px;color:var(--sub);white-space:nowrap}
 .heat-c{width:12px;height:12px;border-radius:3px;background:var(--ink-tint)}
+.heat-grid .heat-c{cursor:pointer}
 .heat-c.l1{background:var(--green);opacity:.3}
 .heat-c.l2{background:var(--green);opacity:.52}
 .heat-c.l3{background:var(--green);opacity:.76}
@@ -2623,8 +2624,9 @@ function hourLabel(h) {
 }
 /**
  * 年度写作热力图：近 53 周 × 7 天，每格一天。
- * 分档用「有记录的天」做四分位（相对深浅），不写死字数阈值 ——
- * 一天写 50 字的人和一天写 800 字的人，都该看出自己的疏密。
+ * 分档用**绝对字数阈值**（1 / 100 / 300 / 700 字四档）—— 颜色必须能对上字数：
+ * 只写了 39 字，格子就得是最浅档，不能靠"相对排名"装成中等深浅。
+ * （第一版做过四分位相对分档，用户一眼看出不对：颜色对不上字数就是不精准。）
  * 它不设样本门槛：数据少时整片空格子本身就是信息，这是它比折线图强的地方。
  */
 function heatmapHtml(byDay) {
@@ -2634,15 +2636,11 @@ function heatmapHtml(byDay) {
   var start = new Date(today);
   start.setDate(start.getDate() - ((start.getDay() + 6) % 7) - 52 * 7); // 本周一往前 52 周
 
-  var vals = Object.keys(byDay).map(function (k) { return byDay[k]; })
-    .sort(function (a, b) { return a - b; });
   function level(v) {
     if (!v) return 0;
-    if (vals.length < 2) return 2;  // 只有一天有记录：给中间档，不假装很深也不假装很浅
-    var at = function (p) { return vals[Math.min(vals.length - 1, Math.floor(p * vals.length))]; };
-    if (v <= at(0.25)) return 1;
-    if (v <= at(0.5)) return 2;
-    if (v <= at(0.75)) return 3;
+    if (v < 100) return 1;
+    if (v < 300) return 2;
+    if (v < 700) return 3;
     return 4;
   }
 
@@ -2813,8 +2811,10 @@ function renderStats() {
       '<div class="chart-card">' +
         '<div class="chart-title">写作热力图<span>' + escapeHtml(heatNote) + '</span></div>' +
         heatmapHtml(byDay) +
-        '<div class="heat-legend"><span>少</span><i class="heat-c"></i><i class="heat-c l1"></i>' +
-          '<i class="heat-c l2"></i><i class="heat-c l3"></i><i class="heat-c l4"></i><span>多</span></div>' +
+        '<div class="heat-legend"><span>0</span><i class="heat-c"></i>' +
+          '<span>1-99</span><i class="heat-c l1"></i><span>100-299</span><i class="heat-c l2"></i>' +
+          '<span>300-699</span><i class="heat-c l3"></i><span>700+</span><i class="heat-c l4"></i>' +
+          '<span>字</span></div>' +
       '</div>' +
       '<div class="stat-cards">' +
         '<div class="stat-card"><div class="stat-num">' + list.length + '<small>篇</small></div><div class="stat-cap">日记总数</div></div>' +
@@ -2871,9 +2871,17 @@ function renderStats() {
     '</div>' +
     '<div class="stat-note">统计只在本机计算，不会上传任何数据。</div>';
 
-  // 热力图默认停在最右（最近的时间）；要看更早的横向滑
+  // 热力图：默认停在最右（最近的时间），要看更早的横向滑；
+  // 手机上没有 hover，点格子用 toast 弹出那天的信息（和桌面 hover 的 title 同款内容）
   var hs = $('#heatScroll');
-  if (hs) hs.scrollLeft = hs.scrollWidth;
+  if (hs) {
+    hs.scrollLeft = hs.scrollWidth;
+    hs.addEventListener('click', function (ev) {
+      var t = ev.target;
+      // 图例里的色块也是 .heat-c，但没有 title，正好被这一条挡掉
+      if (t.classList && t.classList.contains('heat-c') && t.title) toast(t.title);
+    });
+  }
 }
 
 /* ---------------- 图片查看器 ---------------- */
