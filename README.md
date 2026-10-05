@@ -19,11 +19,21 @@
 <td align="center"><img src="docs/screenshots/gallery.jpg" width="190" alt="相册"><br><sub>相册 · 按月汇总</sub></td>
 <td align="center"><img src="docs/screenshots/dark-mode.jpg" width="190" alt="深色模式"><br><sub>深色模式</sub></td>
 </tr>
+<tr>
+<td align="center"><img src="docs/screenshots/stats-heatmap.png" width="190" alt="写作热力图"><br><sub>统计 · 年度写作热力图</sub></td>
+<td align="center"><img src="docs/screenshots/stats-rhythm.png" width="190" alt="写作时段"><br><sub>统计 · 一天与一周的写作时段</sub></td>
+<td align="center"><img src="docs/screenshots/settings-dark.png" width="190" alt="我的"><br><sub>我的 · 密码可选 / 备份 / 深色模式</sub></td>
+</tr>
 </table>
 
 <p align="center">
 <img src="docs/screenshots/landscape.png" width="460" alt="手机横屏"><br>
 <sub>手机横屏适配</sub>
+</p>
+
+<p align="center">
+<img src="docs/screenshots/desktop-1280.png" width="460" alt="桌面版"><br>
+<sub>桌面版 · 左侧导航 + 磁贴 + 最近记录</sub>
 </p>
 
 ## 为什么是单文件
