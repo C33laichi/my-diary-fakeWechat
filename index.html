@@ -683,6 +683,45 @@ input,textarea{font-family:inherit}
   font-variant-numeric:tabular-nums;white-space:nowrap;
 }
 .stat-row .sr-value i{font-style:normal;font-size:12.5px;font-weight:400;color:var(--sub);margin-left:1px}
+/* 三段（概况 / 节奏 / 内容）的分段路标：既是标题，也是长页面滚动时的视觉锚点。
+   不折叠、不藏内容 —— 微信式页面直给，折叠反而让人以为里面没东西。 */
+.stat-sec{margin-top:22px}
+.stat-sec.first{margin-top:0}
+.stat-sec-head{display:flex;align-items:baseline;gap:8px;padding:0 6px}
+.stat-sec-head b{font-size:14.5px;font-weight:600;color:var(--text-strong);letter-spacing:.2px}
+.stat-sec-head span{margin-left:auto;font-size:12px;color:var(--sub)}
+/* 段内相邻元素统一 14px 间距（.chart-card/.stat-rows 自带的 margin-top 在这里被压掉） */
+.stat-sec > * + *{margin-top:14px}
+
+/* 年度写作热力图：近 53 周 × 7 天。
+   ★ 用「像素格子 + 横向滚动」而不是 SVG 缩放 —— SVG 的 viewBox 会把字号一起缩，
+     53 周压进手机宽度后月份标签只剩 6px，等于读不出来。
+   ★ 深浅按「有记录的天」做四分位相对分档，不写死字数阈值：
+     一天写 50 字和一天写 800 字的人，都该看出自己的疏密。
+   ★ 不设样本门槛：数据少时整片空格子本身就是信息（"我还没写"），
+     这正是不用折线图的原因 —— 折线只有 1 个点就没法看。 */
+.heat-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.heat-grid{display:flex;gap:3px;width:max-content;margin:0 auto}
+.heat-dows{display:flex;flex-direction:column;gap:3px;padding-top:17px}
+.heat-dows span{height:12px;line-height:12px;font-size:10.5px;color:var(--sub)}
+.heat-col{display:flex;flex-direction:column;gap:3px}
+/* 月份标签固定 12px 宽并允许溢出：不固定的话文字会把整列撑宽，格子就散了 */
+.heat-m{flex:none;width:12px;height:14px;line-height:14px;font-size:10.5px;color:var(--sub);white-space:nowrap}
+.heat-c{width:12px;height:12px;border-radius:3px;background:var(--ink-tint)}
+.heat-c.l1{background:var(--green);opacity:.3}
+.heat-c.l2{background:var(--green);opacity:.52}
+.heat-c.l3{background:var(--green);opacity:.76}
+.heat-c.l4{background:var(--green)}
+.heat-legend{display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:12px;font-size:11px;color:var(--sub)}
+
+/* 节奏段的分布图复用 .bars 结构，只是矮一档；最高的一根不透明、其余半透明 */
+.bars.sm{height:76px;gap:2px}
+.bars.sm .bar{max-width:none;border-radius:3px}
+.bars.sm .bar.has{opacity:.55}
+.bars.sm .bar.top{opacity:1}
+.bars.sm .bar-cap{font-size:10.5px}
+.rh-sub{font-size:12.5px;color:var(--sub);margin:0 0 10px}
+.rh-sub.mt{margin-top:16px}
 .stat-note{margin-top:14px;font-size:12px;color:var(--sub);text-align:center;line-height:1.7}
 @media (min-width:900px){
   .stat-rows{display:grid;grid-template-columns:repeat(2,1fr)}
@@ -2568,6 +2607,90 @@ function statRow(label, value, unit, rawText) {
   return '<div class="stat-row"><span class="sr-label">' + escapeHtml(label) + '</span>' +
     '<b class="sr-value">' + right + '</b></div>';
 }
+/**
+ * 分段路标：三段（概况 / 节奏 / 内容）各自的标题。
+ * 它只负责在长页面里当路标 —— 不做折叠、不藏内容，微信式页面直给。
+ */
+function statHead(title, sub) {
+  return '<div class="stat-sec-head"><b>' + escapeHtml(title) + '</b>' +
+    (sub ? '<span>' + escapeHtml(sub) + '</span>' : '') + '</div>';
+}
+/** 把 24 小时制的小时翻译成人话：21 →「晚上 21 点」 */
+function hourLabel(h) {
+  var p = h < 5 ? '凌晨' : h < 8 ? '早上' : h < 11 ? '上午'
+    : h < 13 ? '中午' : h < 18 ? '下午' : '晚上';
+  return p + ' ' + h + ' 点';
+}
+/**
+ * 年度写作热力图：近 53 周 × 7 天，每格一天。
+ * 分档用「有记录的天」做四分位（相对深浅），不写死字数阈值 ——
+ * 一天写 50 字的人和一天写 800 字的人，都该看出自己的疏密。
+ * 它不设样本门槛：数据少时整片空格子本身就是信息，这是它比折线图强的地方。
+ */
+function heatmapHtml(byDay) {
+  var WEEKS = 53;
+  var today = new Date();
+  today.setHours(0, 0, 0, 0);
+  var start = new Date(today);
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7) - 52 * 7); // 本周一往前 52 周
+
+  var vals = Object.keys(byDay).map(function (k) { return byDay[k]; })
+    .sort(function (a, b) { return a - b; });
+  function level(v) {
+    if (!v) return 0;
+    if (vals.length < 2) return 2;  // 只有一天有记录：给中间档，不假装很深也不假装很浅
+    var at = function (p) { return vals[Math.min(vals.length - 1, Math.floor(p * vals.length))]; };
+    if (v <= at(0.25)) return 1;
+    if (v <= at(0.5)) return 2;
+    if (v <= at(0.75)) return 3;
+    return 4;
+  }
+
+  var lastMonth = -1;
+  var cols = '';
+  for (var c = 0; c < WEEKS; c++) {
+    var mon = new Date(start);
+    mon.setDate(start.getDate() + c * 7);
+    var label = '';
+    if (mon.getMonth() !== lastMonth) { lastMonth = mon.getMonth(); label = (lastMonth + 1) + '月'; }
+    var cells = '';
+    for (var r = 0; r < 7; r++) {
+      var d = new Date(start);
+      d.setDate(start.getDate() + c * 7 + r);
+      var n = byDay[d.getTime()] || 0;
+      var lv = d.getTime() <= today.getTime() ? level(n) : 0;
+      cells += '<div class="heat-c' + (lv ? ' l' + lv : '') + '" title="' +
+        (d.getMonth() + 1) + '月' + d.getDate() + '日' + (n ? ' · ' + n + ' 字' : '') + '"></div>';
+    }
+    cols += '<div class="heat-col"><div class="heat-m">' + label + '</div>' + cells + '</div>';
+  }
+
+  var dows = '';
+  '一二三四五六日'.split('').forEach(function (n, i) {
+    dows += '<span>' + (i % 2 === 0 ? n : '') + '</span>';
+  });
+
+  return '<div class="heat-scroll" id="heatScroll"><div class="heat-grid">' +
+    '<div class="heat-dows">' + dows + '</div>' + cols + '</div></div>';
+}
+/**
+ * 一行分布柱（24 小时 / 星期）。柱子比文字多给一件事：**分布有多集中** ——
+ * 「21 点写得最多」和「晚 8 点到 11 点都在写」是两种生活。
+ * 复用月度柱状图的 .bars 结构，只是矮一档。
+ */
+function rhythmBars(bin, labels, topIdx) {
+  var max = Math.max.apply(null, bin.concat([1]));
+  return '<div class="bars sm">' + bin.map(function (n, i) {
+    var h = Math.max(n ? Math.round(n / max * 100) : 0, n ? 4 : 3);
+    return '<div class="bar-col">' +
+      '<div class="bar' + (n ? (i === topIdx ? ' has top' : ' has') : '') +
+        '" style="height:' + h + '%"></div>' +
+      '<div class="bar-cap">' + (labels[i] || '&nbsp;') + '</div>' +
+    '</div>';
+  }).join('') + '</div>';
+}
+/** 分布类结论（几点写 / 星期几写）的最低样本量：低于它不下结论，只给 — */
+var STAT_SIG_MIN = 5;
 function renderStats() {
   var list = State.entries;
   var chars = list.reduce(function (n, e) { return n + (e.text ? e.text.length : 0); }, 0);
@@ -2581,8 +2704,18 @@ function renderStats() {
   });
   var max = Math.max.apply(null, months.concat([1]));
   var thisMonth = months[now.getMonth()];
-  var days = {};
-  list.forEach(function (e) { var d = new Date(e.createdAt); days[d.toDateString()] = 1; });
+
+  // 记录天数：key 用「当天 00:00 的时间戳」，比 toDateString 稳（不受 locale 影响）
+  var dayMap = {};
+  list.forEach(function (e) { dayMap[startOfDay(e.createdAt)] = 1; });
+  var dayKeys = Object.keys(dayMap).map(Number).sort(function (a, b) { return a - b; });
+
+  // 每天写了多少字（热力图用）。同一天写多篇要累加，不是覆盖
+  var byDay = {};
+  list.forEach(function (e) {
+    var k = startOfDay(e.createdAt);
+    byDay[k] = (byDay[k] || 0) + (e.text ? e.text.length : 0);
+  });
 
   // 今天 / 本周（按周一开头算）
   var todayKey = now.toDateString();
@@ -2603,38 +2736,144 @@ function renderStats() {
     ? Math.max(1, Math.round((startOfDay(lastAt) - startOfDay(firstAt)) / 86400000) + 1)
     : 0;
 
+  /* ---------- 节奏：几点写 / 星期几写 / 最长空档 ---------- */
+  var hourBin = new Array(24).fill(0);
+  var dowBin = new Array(7).fill(0);
+  list.forEach(function (e) {
+    var d = new Date(e.createdAt);
+    hourBin[d.getHours()]++;
+    dowBin[d.getDay()]++;
+  });
+  // 相邻两个「有记录的日子」之间最多空了多少天。
+  // 用中性词「空档」而不是「断更」—— 这个页面只陈述事实，不评判人。
+  var gapMax = 0;
+  for (var gi = 1; gi < dayKeys.length; gi++) {
+    var gap = Math.round((dayKeys[gi] - dayKeys[gi - 1]) / 86400000) - 1;
+    if (gap > gapMax) gapMax = gap;
+  }
+  /** 取分布里最高的那一格（并列时取靠前的），全 0 返回 -1 */
+  function pickBin(bin) {
+    var bi = -1, bn = 0;
+    bin.forEach(function (n, i) { if (n > bn) { bn = n; bi = i; } });
+    return bi;
+  }
+  var enough = list.length >= STAT_SIG_MIN;
+  var bestHour = enough ? pickBin(hourBin) : -1;
+  var bestDow = enough ? pickBin(dowBin) : -1;
+  var DOW = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+  /* ---------- 内容：在写什么 ---------- */
+  var lens = list.map(function (e) { return e.text ? e.text.length : 0; });
+  var maxLen = lens.length ? Math.max.apply(null, lens) : 0;
+  var withImg = list.filter(function (e) { return e.images && e.images.length; }).length;
+  var avgImg = list.length ? Math.round(imgs / list.length * 10) / 10 : 0;
+
+  // 本月 vs 上月的平均每篇字数。上个月没写就不比 —— 没东西可比不等于「持平」
+  var prevM = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
+  var prevY = now.getMonth() === 0 ? year - 1 : year;
+  var curM = { n: 0, c: 0 }, preM = { n: 0, c: 0 };
+  list.forEach(function (e) {
+    var d = new Date(e.createdAt);
+    var t = (d.getFullYear() === year && d.getMonth() === now.getMonth()) ? curM
+      : (d.getFullYear() === prevY && d.getMonth() === prevM) ? preM : null;
+    if (t) { t.n++; t.c += e.text ? e.text.length : 0; }
+  });
+  var lenTrend = '—';
+  if (curM.n && preM.n) {
+    var dv = Math.round(curM.c / curM.n) - Math.round(preM.c / preM.n);
+    lenTrend = dv === 0 ? '和上月持平'
+      : (dv > 0 ? '比上月多 ' + dv + ' 字' : '比上月少 ' + (-dv) + ' 字');
+  }
+
+  // 标点习惯：只数「情绪型」标点里最常用的那一个。
+  // 不数逗号句号（必然最多、没有信息量），更不做情绪词计数 —— 反讽会被算反。
+  var allText = list.map(function (e) { return e.text || ''; }).join('\n');
+  var dotN = (allText.split('…').length - 1) + (allText.match(/\.{3,}/g) || []).length;
+  var puncts = [['……', dotN], ['？', allText.split('？').length - 1],
+    ['！', allText.split('！').length - 1], ['～', allText.split('～').length - 1]];
+  var pTop = puncts[0];
+  puncts.forEach(function (p) { if (p[1] > pTop[1]) pTop = p; });
+  var punctText = pTop[1] >= STAT_SIG_MIN ? pTop[0] + ' ' + pTop[1] + ' 次' : '—';
+
+  // 热力图副标题：样本不够时不摆「最长空档」（只有一天记录时它没意义）
+  var heatNote = '近一年 ' + list.length + ' 篇' +
+    (dayKeys.length > 1 && gapMax > 0 ? ' · 最长空档 ' + gapMax + ' 天' : '');
+  // 时段图的结论直接写在标题右侧：图给形状、文字给答案，
+  // 这样就不必在明细里为「最常写的时间 / 日子」再占两行（上一轮刚去重过一次）
+  var hourLabels = [];
+  for (var hi = 0; hi < 24; hi++) hourLabels.push(hi % 3 === 0 ? String(hi) : '');
+  var rhythmNote = (bestHour >= 0 && bestDow >= 0)
+    ? '最多：' + hourLabel(bestHour) + ' · ' + DOW[bestDow]
+    : '再写几篇会更准';
+
   $('#statInner').innerHTML =
-    '<div class="stat-cards">' +
-      '<div class="stat-card"><div class="stat-num">' + list.length + '<small>篇</small></div><div class="stat-cap">日记总数</div></div>' +
-      '<div class="stat-card"><div class="stat-num">' + imgs + '<small>张</small></div><div class="stat-cap">图片总数</div></div>' +
-      '<div class="stat-card"><div class="stat-num">' + streakDays() + '<small>天</small></div><div class="stat-cap">连续记录</div></div>' +
+    // ① 概况：年度热力图 + 一张总账。卡片上已有的三项不在明细里重复
+    '<div class="stat-sec first">' +
+      statHead('概况') +
+      '<div class="chart-card">' +
+        '<div class="chart-title">写作热力图<span>' + escapeHtml(heatNote) + '</span></div>' +
+        heatmapHtml(byDay) +
+        '<div class="heat-legend"><span>少</span><i class="heat-c"></i><i class="heat-c l1"></i>' +
+          '<i class="heat-c l2"></i><i class="heat-c l3"></i><i class="heat-c l4"></i><span>多</span></div>' +
+      '</div>' +
+      '<div class="stat-cards">' +
+        '<div class="stat-card"><div class="stat-num">' + list.length + '<small>篇</small></div><div class="stat-cap">日记总数</div></div>' +
+        '<div class="stat-card"><div class="stat-num">' + imgs + '<small>张</small></div><div class="stat-cap">图片总数</div></div>' +
+        '<div class="stat-card"><div class="stat-num">' + streakDays() + '<small>天</small></div><div class="stat-cap">连续记录</div></div>' +
+      '</div>' +
+      '<div class="stat-rows">' +
+        statRow('记录天数', dayKeys.length, '天') +
+        statRow('累计字数', chars, '字') +
+        statRow('平均每篇', (list.length ? Math.round(chars / list.length) : 0), '字') +
+        statRow('累计记录时长', spanDays, '天') +
+        statRow('第一篇写于', firstAt ? TimeFmt.full(firstAt) : '—', '', true) +
+        statRow('最近一篇', lastAt ? TimeFmt.rel(lastAt) : '—', '', true) +
+      '</div>' +
     '</div>' +
-    '<div class="chart-card">' +
-      '<div class="chart-title">' + year + ' 年月度分布<span>最高 ' + max + ' 篇</span></div>' +
-      '<div class="bars">' + months.map(function (n, i) {
-        var h = Math.round(n / max * 100);
-        return '<div class="bar-col">' +
-          '<div class="bar-num">' + (n || '') + '</div>' +
-          '<div class="bar' + (n ? ' has' : '') + '" style="height:' + Math.max(h, 2) + '%"></div>' +
-          '<div class="bar-cap">' + (i + 1) + '</div>' +
-        '</div>';
-      }).join('') + '</div>' +
+    // ② 节奏：什么时候写（月 / 天 / 小时三个粒度，各有一张图管）
+    '<div class="stat-sec">' +
+      statHead('节奏', '什么时候写') +
+      '<div class="chart-card">' +
+        '<div class="chart-title">' + year + ' 年月度分布<span>最高 ' + max + ' 篇</span></div>' +
+        '<div class="bars bars-month">' + months.map(function (n, i) {
+          var h = Math.round(n / max * 100);
+          return '<div class="bar-col">' +
+            '<div class="bar-num">' + (n || '') + '</div>' +
+            '<div class="bar' + (n ? ' has' : '') + '" style="height:' + Math.max(h, 2) + '%"></div>' +
+            '<div class="bar-cap">' + (i + 1) + '</div>' +
+          '</div>';
+        }).join('') + '</div>' +
+      '</div>' +
+      '<div class="chart-card">' +
+        '<div class="chart-title">写作时段<span>' + escapeHtml(rhythmNote) + '</span></div>' +
+        '<div class="rh-sub">一天里</div>' + rhythmBars(hourBin, hourLabels, bestHour) +
+        '<div class="rh-sub mt">一周里</div>' + rhythmBars(dowBin, DOW, bestDow) +
+      '</div>' +
+      '<div class="stat-rows">' +
+        statRow('今天记录', todayCount, '篇') +
+        statRow('本周记录', weekCount, '篇') +
+        statRow('本月记录', thisMonth, '篇') +
+        statRow('最长空档',
+          dayKeys.length < 2 ? '—' : (gapMax === 0 ? '没有空档' : gapMax + ' 天'), '', true) +
+      '</div>' +
     '</div>' +
-    '<div class="stat-rows">' +
-      statRow('记录天数', Object.keys(days).length, '天') +
-      statRow('本月记录', thisMonth, '篇') +
-      statRow('今天记录', todayCount, '篇') +
-      statRow('本周记录', weekCount, '篇') +
-      statRow('日记总数', list.length, '篇') +
-      statRow('图片总数', imgs, '张') +
-      statRow('累计字数', chars, '字') +
-      statRow('平均每篇', (list.length ? Math.round(chars / list.length) : 0), '字') +
-      statRow('连续记录', streakDays(), '天') +
-      statRow('累计记录时长', spanDays, '天') +
-      statRow('第一篇写于', firstAt ? TimeFmt.full(firstAt) : '—', '', true) +
-      statRow('最近一篇', lastAt ? TimeFmt.rel(lastAt) : '—', '', true) +
+    // ③ 内容：在写什么（只看得到「写了什么」，不解释「为什么」）
+    '<div class="stat-sec">' +
+      statHead('内容', '在写什么') +
+      '<div class="stat-rows">' +
+        statRow('最长一篇', maxLen, '字') +
+        statRow('每篇平均配图', avgImg, '张') +
+        statRow('带图日记',
+          withImg + ' 篇 · ' + (list.length ? Math.round(withImg / list.length * 100) : 0) + '%', '', true) +
+        statRow('本月字数变化', lenTrend, '', true) +
+        statRow('标点习惯', punctText, '', true) +
+      '</div>' +
     '</div>' +
     '<div class="stat-note">统计只在本机计算，不会上传任何数据。</div>';
+
+  // 热力图默认停在最右（最近的时间）；要看更早的横向滑
+  var hs = $('#heatScroll');
+  if (hs) hs.scrollLeft = hs.scrollWidth;
 }
 
 /* ---------------- 图片查看器 ---------------- */

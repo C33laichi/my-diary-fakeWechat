@@ -580,24 +580,50 @@ try {
   await cdp.clickSel('#deskTiles .tile[data-go="stats"]');
   await sleep(700);
   const st = await cdp.evalJs(`(() => { const cards = [...document.querySelectorAll('.stat-card .stat-num')].map(e => e.textContent.trim());
-    return { cards, bars: document.querySelectorAll('.bar-col').length,
-             filled: document.querySelectorAll('.bar.has').length,
+    const titles = [...document.querySelectorAll('.chart-title span')].map(e => e.textContent.trim());
+    return { cards, bars: document.querySelectorAll('.bars-month .bar-col').length,
+             filled: document.querySelectorAll('.bars-month .bar.has').length,
+             heatCols: document.querySelectorAll('.heat-col').length,
+             heatCells: document.querySelectorAll('.heat-grid .heat-c').length,
+             heatLit: [...document.querySelectorAll('.heat-grid .heat-c')].filter(e => /l[1-4]/.test(e.className)).length,
+             heatNote: titles[0] || '', rhythmNote: titles[2] || '',
+             slotBars: document.querySelectorAll('.bars.sm .bar-col').length,
+             sections: [...document.querySelectorAll('.stat-sec-head b')].map(e => e.textContent.trim()),
              rows: document.querySelectorAll('.stat-row').length,
              labels: [...document.querySelectorAll('.stat-row .sr-label')].map(e => e.textContent.trim()),
              values: [...document.querySelectorAll('.stat-row .sr-value')].map(e => e.textContent.replace(/[\\s\\u00a0]+/g, ' ').trim()),
              text: document.getElementById('statInner').textContent.replace(/\\s/g, '') }; })()`);
   check('三张数字卡（篇/张/连续天数）',
     st.cards.length === 3 && st.cards[0] === '1篇' && st.cards[1] === '1张' && st.cards[2] === '1天', st.cards.join(' | '));
+  check('分三段：概况 / 节奏 / 内容', st.sections.join('/') === '概况/节奏/内容', st.sections.join('/'));
   check('月度柱状图 12 根', st.bars === 12);
   check('有记录的月份被点亮', st.filled === 1);
-  // ★ 本次改动：明细从 4 行扩到 12 行，每行都是「左侧名目 + 右侧数值」
-  check('明细 12 行', st.rows === 12, `${st.rows} 行`);
-  const needLabels = ['记录天数', '本月记录', '今天记录', '本周记录', '日记总数',
-    '图片总数', '累计字数', '平均每篇', '连续记录', '第一篇写于', '最近一篇'];
+  // ★ 写作热力图：53 周 × 7 天 = 371 格。像素格子铺满，不是 SVG 缩放（缩放会把月份标签缩到读不出来）
+  check('热力图 53 周 × 7 天 = 371 格', st.heatCols === 53 && st.heatCells === 371,
+    `${st.heatCols} 周 / ${st.heatCells} 格`);
+  // 图例里的色块也是 .heat-c，所以上面两条一律限定 .heat-grid 内，别把图例算成格子
+  check('今天那一格亮着', st.heatLit === 1, `${st.heatLit} 格亮着`);
+  check('热力图标题如实报篇数', /近一年 1 篇/.test(st.heatNote), st.heatNote);
+  // ★ 写作时段：24 根（一天）+ 7 根（一周），共用一张卡片
+  check('时段图 = 24 + 7 根柱', st.slotBars === 31, `${st.slotBars} 根`);
+  check('样本不足时不硬说「最多：X 点」', /再写几篇/.test(st.rhythmNote), st.rhythmNote);
+  // ★ 「最常写的时间 / 日子」已从明细升级成图，行数由 17 降到 15
+  check('明细 15 行', st.rows === 15, `${st.rows} 行`);
+  const needLabels = ['记录天数', '累计字数', '平均每篇', '累计记录时长', '第一篇写于', '最近一篇',
+    '今天记录', '本周记录', '本月记录', '最长空档',
+    '最长一篇', '每篇平均配图', '带图日记', '本月字数变化', '标点习惯'];
   const missing = needLabels.filter((l) => !st.labels.includes(l));
   check('明细左侧名目齐全', missing.length === 0, missing.length ? '缺 ' + missing.join('/') : `${st.labels.length} 个名目`);
   check('明细每行都有左侧名目与右侧数值', st.rows === st.labels.length && st.rows === st.values.length,
     `${st.labels.length} 名目 / ${st.values.length} 数值`);
+  check('名目互不重复（卡片算过的三项不在明细里再来一遍）',
+    new Set(st.labels).size === st.labels.length
+    && !st.labels.includes('日记总数') && !st.labels.includes('图片总数') && !st.labels.includes('连续记录'),
+    `${st.labels.length} 行 / ${new Set(st.labels).size} 个不同名目`);
+  // 只有 1 篇时不该硬下结论 —— 样本不够的行如实显示 —
+  check('样本不足时分布类不给结论',
+    st.values.filter((v) => v === '—').length >= 3,
+    st.values.filter((v) => v === '—').join(' | '));
   check('名目在数值左边',
     await cdp.evalJs(`(() => { const r = document.querySelector('.stat-row');
       if (!r) return false;
@@ -610,6 +636,15 @@ try {
   check('今天记录为 1 篇', /今天记录1篇/.test(st.text));
   check('记录天数为 1 天', /记录天数1天/.test(st.text));
   await cdp.shot('16-stats.png');
+  // 页子变长了（多了热力图和时段图），再拍一张底部，
+  // 让「节奏 / 内容」两段在截图里也能被看见，然后滚回顶部收尾
+  const scrollStat = `(() => { let el = document.getElementById('statInner');
+    while (el && el.scrollHeight <= el.clientHeight + 4) el = el.parentElement;
+    if (el) el.scrollTop = ARG; return true; })()`;
+  await cdp.evalJs(scrollStat.replace('ARG', 'el.scrollHeight'));
+  await sleep(350);
+  await cdp.shot('16b-stats-bottom.png');
+  await cdp.evalJs(scrollStat.replace('ARG', '0'));
   const stBack = await cdp.evalJs(`(() => { const b = document.getElementById('btnStatsBack');
     const ico = b.querySelector('svg').getBoundingClientRect();
     const nav = b.closest('.nav').getBoundingClientRect();
