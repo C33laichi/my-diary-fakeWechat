@@ -1692,6 +1692,8 @@ try {
   const badL = geo.rows.filter((r) => r.lOver).map((r) => r.label);
   check('所有明细行名目都不被截断', badL.length === 0,
     badL.length ? '截断：' + badL.join('/') : `${geo.rows.length} 行`);
+  // 留一张"柱高有差异 + 长数值换行"的实拍图，比只有 1 篇数据的截图更能说明这两处修复
+  await cdp.shot('16c-stats-geometry.png');
 
   console.log('\n[19] 控制台异常');
   const errs = cdp.pageErrors();
