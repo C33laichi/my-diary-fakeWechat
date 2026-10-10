@@ -1638,6 +1638,61 @@ try {
   const dg = await cdp.evalJs(`getComputedStyle(document.querySelector('.gal-grid')).gridTemplateColumns.split(' ').length`);
   check('桌面档：相册 6 列', dg === 6, `${dg} 列`);
 
+  /*
+   * [18b] 统计图的几何正确性。
+   * 放在最后、且用注入数据 —— 因为要造出"两个月份字数不同"才能测出柱高比例，
+   * 而前面的用例都只写 1 篇。这里改的只是内存里的 State.entries，不落库，
+   * 且后面 [19] 只读错误列表，所以不会污染别的用例。
+   *
+   * 两个坑都是真实踩过的：
+   *  ① 柱高百分比若基于整列，会被固定开销（数字+月份+gap）挤到 flex-shrink，
+   *     100% 的柱子和 68% 的柱子最后一样高（用户报：上月多 1000 字却显示等高）。
+   *  ② .sr-value 写死 nowrap + flex:none，内容一长就被 overflow:hidden 裁掉，
+   *     看得到半截又划不动（用户报）。
+   */
+  console.log('\n[18b] 统计图几何：柱高正比于字数 + 长数值不被裁');
+  // ⚠️ 这里不能 Page.navigate 重载：前面的用例设过密码，重载后会被锁屏挡住。
+  //    改为在当前已解锁的页面里切回首页，避开输入密码那一步。
+  await cdp.viewport(390, 844, true);
+  await sleep(500);
+  await cdp.evalJs(`window.__diary__.switchTab('home')`);
+  await sleep(700);
+  await cdp.evalJs(`(() => {
+    const mk = (y, m, d, len) => {
+      let t = '';
+      while (t.length < len) t += '今天写了一点东西，天气还行！真的吗？好吧……继续写下去，';
+      t = t.slice(0, len);
+      const ts = new Date(y, m - 1, d, 21, 30, 0).getTime();
+      return { id: 'geo-' + y + m + d, text: t, images: [], createdAt: ts, updatedAt: ts };
+    };
+    window.__diary__.State.entries = [mk(2026, 10, 5, 1512), mk(2026, 9, 15, 2230)];
+    return true; })()`);
+  await cdp.clickSel('#deskTiles .tile[data-go="stats"]');
+  await sleep(900);
+  const geo = await cdp.evalJs(`(() => {
+    const cols = [...document.querySelectorAll('.bars-month .bar-col')];
+    const bars = cols.map((c, i) => ({ m: i + 1, num: c.querySelector('.bar-num').textContent.trim(),
+      h: Math.round(c.querySelector('.bar').getBoundingClientRect().height * 10) / 10 }));
+    const m9 = bars.find(x => x.m === 9), m10 = bars.find(x => x.m === 10);
+    const rows = [...document.querySelectorAll('.stat-row')].map(r => {
+      const v = r.querySelector('.sr-value'), l = r.querySelector('.sr-label');
+      return { label: l.textContent.trim(),
+               vOver: v.scrollWidth > v.clientWidth + 1, lOver: l.scrollWidth > l.clientWidth + 1 };
+    });
+    return { m9, m10, ratio: m10.h / m9.h, rows };
+  })()`);
+  check('柱高正比于字数（9 月 2230 字柱明显高于 10 月 1512 字柱）',
+    geo.m9.h > geo.m10.h + 3, `9月 ${geo.m9.h}px / 10月 ${geo.m10.h}px`);
+  check('柱高比例 ≈ 字数比例 0.678（不再是 flex-shrink 后的等高）',
+    Math.abs(geo.ratio - 1512 / 2230) < 0.08,
+    `实测 ${geo.ratio.toFixed(3)} / 期望 ${(1512 / 2230).toFixed(3)}`);
+  const badV = geo.rows.filter((r) => r.vOver).map((r) => r.label);
+  check('所有明细行数值都不水平溢出（长内容换行而非被裁）', badV.length === 0,
+    badV.length ? '溢出：' + badV.join('/') : `${geo.rows.length} 行`);
+  const badL = geo.rows.filter((r) => r.lOver).map((r) => r.label);
+  check('所有明细行名目都不被截断', badL.length === 0,
+    badL.length ? '截断：' + badL.join('/') : `${geo.rows.length} 行`);
+
   console.log('\n[19] 控制台异常');
   const errs = cdp.pageErrors();
   check('无未捕获 JS 异常 / 控制台错误', errs.length === 0, errs.slice(0, 3).join(' | '));

@@ -663,6 +663,15 @@ input,textarea{font-family:inherit}
 .chart-title span{margin-left:auto;color:var(--sub);font-size:12.5px}
 .bars{display:flex;align-items:flex-end;gap:6px;height:132px}
 .bar-col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:7px;height:100%}
+/*
+ * 柱子的"轨道"：柱高百分比必须基于这条轨道，不能基于整列。
+ * 整列里还有数字(13px)、月份(16px)和两个 gap(14px)，柱子实际可用的只有 89px；
+ * 若直接给柱子 height:100%，它会先要 132px、超出后被 flex-shrink 压回 89px，
+ * 而 68% 的柱子本来只要 89.8px、几乎不被压 —— 两根柱最后一样高（已踩：
+ * 上月 2230 字与本月 1512 字显示成等高）。轨道把固定开销挡在外面，
+ * 柱高才真正成正比。
+ */
+.bar-track{flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center;min-height:0}
 .bar{
   width:100%;max-width:26px;border-radius:5px 5px 3px 3px;background:var(--ink-tint);
   min-height:3px;transition:height .4s cubic-bezier(.4,0,.2,1);
@@ -676,11 +685,18 @@ input,textarea{font-family:inherit}
   border-bottom:.5px solid var(--line);font-size:14.5px;
 }
 .stat-rows .stat-row:last-child{border-bottom:0}
-/* 左名目 + 右数值：名目固定色、数值加重，长名目不换行 */
-.stat-row .sr-label{color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 左名目 + 右数值：名目固定色、数值加重。
+   空间分配的原则：**名目优先保完整**（它只有 2~4 个字，"句式习惯"被截成"句式…"
+   就完全读不懂了），数值允许换行。原来两边都写死 nowrap，长数值被 overflow:hidden
+   裁掉——看得到半截又划不动（用户反馈）。 */
+.stat-row .sr-label{
+  color:var(--text);flex:0 0 auto;max-width:45%;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
 .stat-row .sr-value{
-  margin-left:auto;flex:none;font-weight:500;color:var(--text-strong);font-size:15px;
-  font-variant-numeric:tabular-nums;white-space:nowrap;
+  margin-left:auto;flex:1 1 auto;min-width:0;text-align:right;
+  font-weight:500;color:var(--text-strong);font-size:15px;
+  font-variant-numeric:tabular-nums;white-space:normal;word-break:break-word;line-height:1.45;
 }
 .stat-row .sr-value i{font-style:normal;font-size:12.5px;font-weight:400;color:var(--sub);margin-left:1px}
 /* 三段（概况 / 节奏 / 内容）的分段路标：既是标题，也是长页面滚动时的视觉锚点。
@@ -2695,8 +2711,8 @@ function rhythmBars(bin, labels, topIdx) {
   return '<div class="bars sm">' + bin.map(function (n, i) {
     var h = Math.max(n ? Math.round(n / max * 100) : 0, n ? 4 : 3);
     return '<div class="bar-col">' +
-      '<div class="bar' + (n ? (i === topIdx ? ' has top' : ' has') : '') +
-        '" style="height:' + h + '%"></div>' +
+      '<div class="bar-track"><div class="bar' + (n ? (i === topIdx ? ' has top' : ' has') : '') +
+        '" style="height:' + h + '%"></div></div>' +
       '<div class="bar-cap">' + (labels[i] || '&nbsp;') + '</div>' +
     '</div>';
   }).join('') + '</div>';
@@ -2889,7 +2905,8 @@ function renderStats() {
           var h = Math.round(n / max * 100);
           return '<div class="bar-col">' +
             '<div class="bar-num">' + (n ? (n >= 1000 ? (Math.round(n / 100) / 10) + 'k' : n) : '') + '</div>' +
-            '<div class="bar' + (n ? ' has' : '') + '" style="height:' + Math.max(h, 2) + '%"></div>' +
+            '<div class="bar-track"><div class="bar' + (n ? ' has' : '') +
+              '" style="height:' + Math.max(h, 2) + '%"></div></div>' +
             '<div class="bar-cap">' + (i + 1) + '</div>' +
           '</div>';
         }).join('') + '</div>' +
@@ -2939,8 +2956,9 @@ function renderStats() {
         // 且 Y% 由 X 和总数一除就得 —— 并成一行
         statRow('配图', withImg + ' 篇带图 · 平均 ' + avgImg + ' 张', '', true) +
         // 句式习惯：每 100 字几个逗号（替代原来的"标点习惯"——它挑的是四种情绪标点里
-        // 最多的那个，用户逗号最多却选不进来，端出来一个次多的，属于名实不符）
-        statRow('句式习惯', commaText + (markText ? ' · ' + markText : ''), '', true) +
+        // 最多的那个，用户逗号最多却选不进来，端出来一个次多的，属于名实不符）。
+        // 注脚（！？…… 计数）走 unit 槽套 <i>：小一号、灰色，不和主信息抢眼。
+        statRow('句式习惯', commaText, markText ? ' · ' + markText : '') +
       '</div>' +
     '</div>' +
     '<div class="stat-note">统计只在本机计算，不会上传任何数据。</div>';
