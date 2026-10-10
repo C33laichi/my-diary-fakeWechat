@@ -586,8 +586,11 @@ try {
              heatCols: document.querySelectorAll('.heat-col').length,
              heatCells: document.querySelectorAll('.heat-grid .heat-c').length,
              heatLit: [...document.querySelectorAll('.heat-grid .heat-c')].filter(e => /l[1-4]/.test(e.className)).length,
-             heatNote: titles[0] || '', rhythmNote: titles[2] || '',
+             // 卡片标题顺序：0 热力图 / 1 月度字数 / 2 近 6 月走势 / 3 写作时段
+             heatNote: titles[0] || '', rhythmNote: titles[3] || '',
              slotBars: document.querySelectorAll('.bars.sm .bar-col').length,
+             trendCols: document.querySelectorAll('.trend-dots .trend-col').length,
+             trendLine: !!document.querySelector('.trend-svg polyline'),
              sections: [...document.querySelectorAll('.stat-sec-head b')].map(e => e.textContent.trim()),
              rows: document.querySelectorAll('.stat-row').length,
              labels: [...document.querySelectorAll('.stat-row .sr-label')].map(e => e.textContent.trim()),
@@ -616,11 +619,12 @@ try {
   // ★ 写作时段：24 根（一天）+ 7 根（一周），共用一张卡片
   check('时段图 = 24 + 7 根柱', st.slotBars === 31, `${st.slotBars} 根`);
   check('样本不足时不硬说「最多：X 点」', /再写几篇/.test(st.rhythmNote), st.rhythmNote);
-  // ★ 「最常写的时间 / 日子」已从明细升级成图，行数由 17 降到 15
-  check('明细 15 行', st.rows === 15, `${st.rows} 行`);
-  const needLabels = ['记录天数', '累计字数', '平均每篇', '累计记录时长', '第一篇写于', '最近一篇',
-    '今天记录', '本周记录', '本月记录', '最长空档',
-    '最长一篇', '每篇平均配图', '带图日记', '本月字数变化', '标点习惯'];
+  // ★ 「最常写的时间 / 日子」已从明细升级成图，行数由 17 降到 15；
+  //   本轮再把互相可推导的存量项压成 3 行 + 节奏 2 行 + 内容 3 行 = 8 行
+  check('明细 8 行', st.rows === 8, `${st.rows} 行`);
+  const needLabels = ['累计字数', '写了多久', '最近一篇',
+    '近 7 天', '最长空档',
+    '最长一篇', '配图', '句式习惯'];
   const missing = needLabels.filter((l) => !st.labels.includes(l));
   check('明细左侧名目齐全', missing.length === 0, missing.length ? '缺 ' + missing.join('/') : `${st.labels.length} 个名目`);
   check('明细每行都有左侧名目与右侧数值', st.rows === st.labels.length && st.rows === st.values.length,
@@ -629,9 +633,15 @@ try {
     new Set(st.labels).size === st.labels.length
     && !st.labels.includes('日记总数') && !st.labels.includes('图片总数') && !st.labels.includes('连续记录'),
     `${st.labels.length} 行 / ${new Set(st.labels).size} 个不同名目`);
+  // 本轮删掉的"能算出来"项，不该再出现在页面上
+  const goneLabels = ['平均每篇', '累计记录时长', '记录天数', '今天记录', '本周记录', '本月记录',
+    '每篇平均配图', '带图日记', '本月字数变化', '标点习惯'];
+  check('已被合并/删除的存量项不再出现',
+    goneLabels.every((l) => !st.labels.includes(l)),
+    st.labels.filter((l) => goneLabels.includes(l)).join('/') || '无残留');
   // 只有 1 篇时不该硬下结论 —— 样本不够的行如实显示 —
   check('样本不足时分布类不给结论',
-    st.values.filter((v) => v === '—').length >= 3,
+    st.values.filter((v) => v === '—').length >= 1,
     st.values.filter((v) => v === '—').join(' | '));
   check('名目在数值左边',
     await cdp.evalJs(`(() => { const r = document.querySelector('.stat-row');
@@ -639,11 +649,29 @@ try {
       const l = r.querySelector('.sr-label').getBoundingClientRect();
       const v = r.querySelector('.sr-value').getBoundingClientRect();
       return l.left < v.left; })()`));
-  // 名目「平均每篇」+ 数值「33字」拆在两个元素里，所以断言要看整行文本，不能只看 nameInner
-  check('本月记录 1 篇', st.text.includes('本月记录1篇'));
-  check('平均每篇字数已计算', /平均每篇\d+字/.test(st.text));
-  check('今天记录为 1 篇', /今天记录1篇/.test(st.text));
-  check('记录天数为 1 天', /记录天数1天/.test(st.text));
+  // ★ 逗号密度：原来挑「！？……里最多的一个」冒充「标点习惯」是名实不符
+  //   （用户逗号最多却进不了候选，端出来一个次多的）。现在数逗号、按每 100 字正常化，
+  //   1 篇也有值，不再恒为 —
+  // st.text 已去掉所有空白，所以直接匹配紧凑形式；注意其后紧跟「统计只在本机…」
+  check('句式习惯按逗号密度给出', /句式习惯每100字[\d.]+个·(短句流|行文平实|长句流)/.test(st.text),
+    (st.text.match(/句式习惯每100字[^统]*/) || [''])[0].slice(0, 40));
+  check('逗号最多的场景不再报「！」当习惯',
+    !/标点习惯/.test(st.text), /标点习惯/.test(st.text) ? '仍存在旧名目' : '旧名目已移除');
+  // 累计字数行的数值由「累计字数」+「39 字  平均 39 字」两截拼成，
+  // 第一截在 sr-label、后两截在 sr-value，取整行文本判断
+  const rowOf = (label) => {
+    const i = st.labels.indexOf(label);
+    return i < 0 ? '' : st.labels[i] + st.values[i];
+  };
+  check('累计字数含平均值', /^累计字数\d+\s*字\s*·\s*平均\s*\d+\s*字$/.test(rowOf('累计字数').trim()),
+    rowOf('累计字数'));
+  check('「写了多久」含起始日期与天数', /^写了多久\d{4}-\d{2}-\d{2}.*起\s*·\s*\d+\s*天$/.test(rowOf('写了多久').trim()),
+    rowOf('写了多久'));
+  // ★ 月度柱状图本轮从"篇数"改成"字数" —— 1 篇 800 字和 1 篇 20 字在"篇数"眼里一样高
+  check('月度柱状图按字数画', /年月度字数/.test(st.text), /年月度字数|年月度分布/.test(st.text) ? '标题已含字数' : '标题未更新');
+  // ★ 新增「近 6 个月每篇字数」走势图：整页唯一回答"我写得怎么样"的图
+  check('近 6 个月走势图 6 列', st.trendCols === 6, `${st.trendCols} 列`);
+  check('走势图有折线', st.trendLine === true);
   await cdp.shot('16-stats.png');
   // 页子变长了（多了热力图和时段图），再拍一张底部，
   // 让「节奏 / 内容」两段在截图里也能被看见，然后滚回顶部收尾
