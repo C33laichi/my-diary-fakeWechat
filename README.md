@@ -144,7 +144,7 @@ node verify_fold.mjs         #  14 项：「更多 / 收起」的折叠判定
 的源文件**逐字节比对**（沙箱里 `unzip` 会报 EBUSY，所以这里手写了解析）。
 
 ```bash
-node _verify/apk_peek.mjs my-diary-v2.2-debug.apk
+node _verify/apk_peek.mjs my-diary-v2.3-debug.apk
 # MATCH  ✅ APK 内的 index.html 与源文件逐字节一致
 ```
 
