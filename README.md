@@ -86,7 +86,11 @@ npm run apk:debug    # 生成调试包
 npm run apk:release  # 生成正式包（首次会自动生成签名证书）
 ```
 
-产物在 `mobile/android/app/build/outputs/apk/`。也可以直接双击 `mobile/build-apk.bat`。
+产物在 `mobile/android/app/build/outputs/apk/`。
+
+不想敲命令的话，**直接双击** `mobile/build-apk-menu.bat` —— 它会先强制同步三处
+`index.html` 副本并逐字节校验，再让你选 Debug 还是 Release，最后把产物路径和大小报出来。
+（`mobile/build-apk.bat` 是更早的简化版，只出 Debug 包。）
 
 > ⚠️ **签名证书请自己备份**：`npm run apk:release` 首次会生成
 > `mobile/android/diary-release.keystore` 与 `keystore.properties`（含明文密码）。
@@ -134,6 +138,15 @@ node verify_fold.mjs         #  14 项：「更多 / 收起」的折叠判定
 这些脚本积累了几个**真实踩过的坑**，都写在了注释里（`overflow:hidden` 会让被平移的
 轮播子树失去命中测试、`addImages` 曾不返回 Promise、折叠判定曾把逻辑行当视觉行……）。
 改代码前建议先读一遍，改完跑一遍。
+
+打完包想确认「装进 APK 的到底是不是这份 `index.html`」，用 `_verify/apk_peek.mjs`
+把关：它不解压，直接读 zip 中央目录、把包内 `assets/public/index.html` 抽出来与仓库根
+的源文件**逐字节比对**（沙箱里 `unzip` 会报 EBUSY，所以这里手写了解析）。
+
+```bash
+node _verify/apk_peek.mjs my-diary-v2.2-debug.apk
+# MATCH  ✅ APK 内的 index.html 与源文件逐字节一致
+```
 
 ## 许可
 
