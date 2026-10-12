@@ -121,11 +121,11 @@ _verify/                # 自动化验证脚本与界面截图
 
 ## 自动化验证
 
-项目里的功能都有对应的浏览器回归脚本，共 **612 项断言**，不需要真机：
+项目里的功能都有对应的浏览器回归脚本，共 **615 项断言**，不需要真机：
 
 ```bash
 cd _verify
-node e2e_diary.mjs           # 372 项：网页版全量回归（需先另开终端 node serve.cjs）
+node e2e_diary.mjs           # 375 项：网页版全量回归（需先另开终端 node serve.cjs）
 node verify_close_pin.mjs    #  89 项：密码锁的关闭 / 修改流程
 node native_shell.mjs        #  36 项：注入假原生桥，验证返回键 / 原生导出 / 状态栏
 node verify_zoom_rotate.mjs  #  36 项：照片缩放 / 横屏适配 / 拍照回退
@@ -144,7 +144,7 @@ node verify_fold.mjs         #  14 项：「更多 / 收起」的折叠判定
 的源文件**逐字节比对**（沙箱里 `unzip` 会报 EBUSY，所以这里手写了解析）。
 
 ```bash
-node _verify/apk_peek.mjs my-diary-v2.3-debug.apk
+node _verify/apk_peek.mjs my-diary-v2.3.1-debug.apk
 # MATCH  ✅ APK 内的 index.html 与源文件逐字节一致
 ```
 

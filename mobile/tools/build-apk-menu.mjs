@@ -6,7 +6,8 @@
  *     build-apk-menu.bat 只是纯 ASCII 薄壳，负责双击 + 传参。
  *  2) 不让 setup-android.mjs 代劳出包 —— 它探测 JDK 的逻辑在本机认不出 JDK 21
  *     （会探到 D:\jdk17，然后转去下载解压而失败）。这里自己找 JAVA_HOME，找不到就明确报错。
- *  3) **打包前拦一次"版本号没升"** —— 每次更新都该把 versionCode +1、versionName 进一位（2.3 → 2.4）。
+ *  3) **打包前拦一次"版本号没升"** —— 每次更新都该把 versionCode +1，versionName 按语义走：
+ *     功能更新进一位（2.3 -> 2.4），小修补走第三位（2.3 -> 2.3.1）。
  *     否则两次不同的改动会打出同名同版本的两个包，手机上覆盖安装后根本分不清装的是哪版。
  *
  * 用法：
@@ -60,19 +61,23 @@ function readVersion() {
   };
 }
 
-/** 给出下一个版本号建议：2.3 -> 2.4 */
+/** 给出下一个版本号建议：三段式走小修（2.3.1 -> 2.3.2），两段式进一位（2.3 -> 2.4） */
 function bumpHint(name) {
-  const m = String(name).match(/^(\d+)\.(\d+)$/);
-  return m ? `${m[1]}.${Number(m[2]) + 1}` : `${name} (versionName 进一位)`;
+  const s = String(name);
+  const m3 = s.match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (m3) return `${m3[1]}.${m3[2]}.${Number(m3[3]) + 1}`;
+  const m2 = s.match(/^(\d+)\.(\d+)$/);
+  if (m2) return `${m2[1]}.${m2[2] + 1}`;
+  return `${s} (versionName 进一位)`;
 }
 
-/** 仓库根下已经打出来的包，形如 my-diary-v2.3-debug.apk */
+/** 仓库根下已经打出来的包，形如 my-diary-v2.4-debug.apk */
 function existingPackages() {
   return fs.readdirSync(REPO)
     .filter((f) => /^my-diary-v.+-.+\.apk$/i.test(f))
     .map((f) => {
       const m = f.match(/^my-diary-v(.+?)-(debug|release)\.apk$/i);
-      return { file: f, ver: m ? m[1] : '?' };
+      return { file: f, ver: m ? m[1] : '?', kind: m ? m[2].toLowerCase() : '?' };
     });
 }
 
@@ -193,10 +198,10 @@ async function main() {
   if (mode !== 'debug' && mode !== 'release') {
     console.log('');
     console.log('  选择要打包的类型：');
-    console.log('    1) Debug   —— 自己手机测试用（安装快，体积略大）');
-    console.log('    2) Release —— 发给别人用（正式签名，体积小）');
+    console.log('    1) Release —— 正式包（默认；手机上就装这个）');
+    console.log('    2) Debug   —— 只在排查构建问题时才需要（体积略大，平时用不上）');
     console.log('');
-    mode = (await ask('  输入 1 或 2（直接回车 = Debug）：')) === '2' ? 'release' : 'debug';
+    mode = (await ask('  输入 1 或 2（直接回车 = Release）：')) === '2' ? 'debug' : 'release';
   }
   const kind = mode;                                  // debug | release
   const variant = kind === 'release' ? 'Release' : 'Debug';
@@ -207,17 +212,20 @@ async function main() {
   console.log('='.repeat(52));
   console.log('');
 
-  // ① 版本号检查：这是这个脚本存在的首要理由
+  // ① 版本号检查：这是这个脚本存在的首要理由。
+  //    只拦「同版本 + 同类型」：debug / release 是同一版本的两个变体，先后各打一份是正常的，
+  //    不能互相拦（真实踩过：打完 debug 再打 release，被刚归档的 debug 包拦住了）。
   console.log('[1/5] 版本号检查');
   const { name: ver, code } = readVersion();
   console.log(`  build.gradle：versionName "${ver}" · versionCode ${code}`);
-  const dup = existingPackages().filter((p) => p.ver === ver);
+  const dup = existingPackages().filter((p) => p.ver === ver && p.kind === kind);
   if (dup.length) {
     console.log('');
-    console.log(`  ⚠ 仓库里已经有 v${ver} 的包了：${dup.map((d) => d.file).join('、')}`);
+    console.log(`  ⚠ 仓库里已经有 v${ver} 的 ${kind} 包了：${dup.map((d) => d.file).join('、')}`);
     console.log('    如果这次是一轮新的改动，请先升版本号：');
     console.log(`      mobile/android/app/build.gradle   versionCode ${code} -> ${Number(code) + 1} · versionName "${ver}" -> "${bumpHint(ver)}"`);
     console.log('      mobile/ios/App/App.xcodeproj/project.pbxproj   CURRENT_PROJECT_VERSION / MARKETING_VERSION 同步改');
+    console.log('      （功能更新进一位 2.3 -> 2.4；小修补走第三位 2.3.1 -> 2.3.2）');
     console.log('');
     if (!FORCE) {
       const a = await ask('  输入 y 仍然继续打包，直接回车则中止：');

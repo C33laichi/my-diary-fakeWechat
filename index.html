@@ -698,7 +698,11 @@ input,textarea{font-family:inherit}
   font-weight:500;color:var(--text-strong);font-size:15px;
   font-variant-numeric:tabular-nums;white-space:normal;word-break:break-word;line-height:1.45;
 }
-.stat-row .sr-value i{font-style:normal;font-size:12.5px;font-weight:400;color:var(--sub);margin-left:1px}
+.stat-row .sr-value i{font-style:normal;font-size:12.5px;font-weight:400;color:var(--sub);margin-left:1px;
+  display:inline-block;white-space:nowrap}
+/* 注脚整体不拆行：它要么贴在主体后面，要么整块掉到下一行（右对齐）。
+   之前是纯行内元素，换行点落在任意字符之间，出现过「· ！ 18 / 次 · ？ 8 次」
+   这种把计数和量词腰斩的断行（用户截图抓到的）。 */
 /* 三段（概况 / 节奏 / 内容）的分段路标：既是标题，也是长页面滚动时的视觉锚点。
    不折叠、不藏内容 —— 微信式页面直给，折叠反而让人以为里面没东西。 */
 .stat-sec{margin-top:22px}
@@ -2858,14 +2862,21 @@ function renderStats() {
   var commaText = chars ? '每 100 字 ' + commaDens + ' 个 · ' + toneWord : '—';
 
   // 第二大项退居副标题：只作注脚，不再冒充"习惯"。样本不足只写个数、不写「次」。
-  var dotN = (allText.split('…').length - 1) + (allText.match(/\.{3,}/g) || []).length;
+  // 候选范围（用户 2026-10-12 提出要扩大）：！、？、……、表情（emoji）。
+  // ……按「出现次数」数：连续的 … 算 1 次 —— 以前按字符数，一个"……"被数成 2 次。
+  var dotN = (allText.match(/…+/g) || []).length + (allText.match(/\.{3,}/g) || []).length;
   var exN = allText.split('！').length - 1;
   var qmN = allText.split('？').length - 1;
-  var marks = [['！', exN], ['？', qmN], ['……', dotN]]
+  // 表情：\p{Extended_Pictographic} 覆盖笑脸/手势/动物/❤ 等绝大多数 emoji。
+  // try 包一层是防御：极老的 WebView（Chrome < 64）不认识 \p 转义，别把整个统计页炸了。
+  var emojiN = 0;
+  try { emojiN = (allText.match(/\p{Extended_Pictographic}/gu) || []).length; }
+  catch (e) { /* 老内核不认 Unicode 属性转义：表情这一项直接缺席 */ }
+  var marks = [['！', exN, ' 次'], ['？', qmN, ' 次'], ['……', dotN, ' 次'], ['表情', emojiN, ' 个']]
     .filter(function (m) { return m[1] > 0; })
     .sort(function (a, b) { return b[1] - a[1]; })
-    .slice(0, 2)
-    .map(function (m) { return m[0] + ' ' + m[1] + ' 次'; });
+    .slice(0, 3)
+    .map(function (m) { return m[0] + ' ' + m[1] + m[2]; });
   var markText = marks.length ? marks.join(' · ') : '';
 
   // 热力图副标题：样本不够时不摆「最长空档」（只有一天记录时它没意义）
@@ -2988,7 +2999,8 @@ function renderStats() {
         statRow('配图', withImg + ' 篇带图 · 平均 ' + avgImg + ' 张', '', true) +
         // 句式习惯：每 100 字几个逗号（替代原来的"标点习惯"——它挑的是四种情绪标点里
         // 最多的那个，用户逗号最多却选不进来，端出来一个次多的，属于名实不符）。
-        // 注脚（！？…… 计数）走 unit 槽套 <i>：小一号、灰色，不和主信息抢眼。
+        // 注脚（！？……/表情 top3）走 unit 槽套 <i>：小一号、灰色，不和主信息抢眼；
+        // <i> 是 inline-block + nowrap —— 放不下就整块掉到下一行，绝不腰斩。
         statRow('句式习惯', commaText, markText ? ' · ' + markText : '') +
       '</div>' +
     '</div>' +

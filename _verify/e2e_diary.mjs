@@ -1746,7 +1746,7 @@ try {
   await cdp.evalJs(`(() => {
     const mk = (y, m, d, len) => {
       let t = '';
-      while (t.length < len) t += '今天写了一点东西，天气还行！真的吗？好吧……继续写下去，';
+      while (t.length < len) t += '今天写了一点东西😀😀，天气还行！真的吗？好吧……继续写下去，';
       t = t.slice(0, len);
       const ts = new Date(y, m - 1, d, 21, 30, 0).getTime();
       return { id: 'geo-' + y + m + d, text: t, images: [], createdAt: ts, updatedAt: ts };
@@ -1765,7 +1765,17 @@ try {
       return { label: l.textContent.trim(),
                vOver: v.scrollWidth > v.clientWidth + 1, lOver: l.scrollWidth > l.clientWidth + 1 };
     });
-    return { m9, m10, ratio: m10.h / m9.h, rows };
+    // 句式习惯的注脚（！？……/表情）：整体 inline-block + nowrap，放不下就整块掉行
+    const markRow = [...document.querySelectorAll('.stat-row')]
+      .find(r => r.querySelector('.sr-label').textContent.trim() === '句式习惯');
+    const mi = markRow ? markRow.querySelector('.sr-value i') : null;
+    const mark = mi ? {
+      text: mi.textContent.trim(),
+      disp: getComputedStyle(mi).display, ws: getComputedStyle(mi).whiteSpace,
+      iW: Math.round(mi.getBoundingClientRect().width * 10) / 10,
+      vW: Math.round(markRow.querySelector('.sr-value').getBoundingClientRect().width * 10) / 10,
+    } : null;
+    return { m9, m10, ratio: m10.h / m9.h, rows, mark };
   })()`);
   check('柱高正比于字数（9 月 2230 字柱明显高于 10 月 1512 字柱）',
     geo.m9.h > geo.m10.h + 3, `9月 ${geo.m9.h}px / 10月 ${geo.m10.h}px`);
@@ -1778,6 +1788,20 @@ try {
   const badL = geo.rows.filter((r) => r.lOver).map((r) => r.label);
   check('所有明细行名目都不被截断', badL.length === 0,
     badL.length ? '截断：' + badL.join('/') : `${geo.rows.length} 行`);
+  // ★ 句式习惯注脚（2026-10-12 两处改动）：
+  //   ① 候选范围扩到 emoji（\p{Extended_Pictographic}），top3；注入句每 32 字有 2 个 😀，
+  //      表情数稳超 ！？……，必进注脚且排第一。
+  //   ② 注脚 <i> 改 inline-block + nowrap：放不下就整块掉行，不许「· ！ 18 / 次」腰斩。
+  check('句式习惯注脚扩大到表情符号（emoji 计数进 top3）',
+    geo.mark && /表情 \d+ 个/.test(geo.mark.text) &&
+      geo.mark.text.split('·').filter((s) => s.trim()).length <= 3,
+    geo.mark ? geo.mark.text : '（没有注脚）');
+  check('句式习惯注脚整体不拆行（inline-block + nowrap）',
+    geo.mark && geo.mark.disp === 'inline-block' && geo.mark.ws === 'nowrap',
+    geo.mark ? `${geo.mark.disp}/${geo.mark.ws}` : '（没有注脚）');
+  check('句式习惯注脚不超出数值区（宁可整块换行也不溢出）',
+    geo.mark && geo.mark.iW <= geo.mark.vW + 1,
+    geo.mark ? `注脚 ${geo.mark.iW}px / 数值区 ${geo.mark.vW}px` : '（没有注脚）');
   // 留一张"柱高有差异 + 长数值换行"的实拍图，比只有 1 篇数据的截图更能说明这两处修复
   await cdp.shot('16c-stats-geometry.png');
 
