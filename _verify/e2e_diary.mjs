@@ -451,6 +451,37 @@ try {
   check('收起后按钮文案还原成「更多」',
     /更多/.test(await cdp.evalJs(`document.querySelector('#timeline .post-moretext').textContent`)));
 
+  /*
+   * ★ 冷启动场景：boot 里的 renderTimeline 跑在时间线面板 display:none 的时候。
+   *   踩过的坑：syncPostFold 原先写 `clientWidth || window.innerWidth`，那个兜底让
+   *   隐藏态的宽度(0)被换成视口宽(390)，于是签名和"可见时"完全一样 —— 隐藏时那次
+   *   落空的测量把签名占了，切到时间线时签名命中直接 return，长文永远不折叠、也
+   *   没有「更多」（用户报："一打开 APP 没有立即显示更多"）。
+   *   上面的 [6b] 是在已经进入时间线之后测的，正好绕过这条路径，所以没能拦住它。
+   */
+  await cdp.send('Page.navigate', { url: BASE + '?t=' + Date.now() });
+  await sleep(3400);
+  if (await cdp.evalJs(`document.getElementById('screen-cover').classList.contains('show')`)) {
+    await cdp.evalJs(`document.getElementById('screen-cover').click()`);
+    await sleep(900);
+  }
+  const coldPre = await cdp.evalJs(`(() => {
+    const body = document.querySelector('#timeline .post-text');
+    return { tlCW: document.getElementById('screen-timeline').clientWidth,
+             sig: body ? (body.dataset.foldSig || '') : '(无正文)' }; })()`);
+  check('冷启动时时间线不可见（宽度 0），且没有预写 foldSig',
+    coldPre.tlCW === 0 && coldPre.sig === '', `cw=${coldPre.tlCW} sig="${coldPre.sig}"`);
+  // 点底部栏进时间线，同一帧就必须有「更多」（不等定时器、不做任何额外操作）
+  await cdp.evalJs(`document.getElementById('tabbar').querySelector('.tab[data-tab="timeline"]').click()`);
+  const coldFold = await cdp.evalJs(`(() => ({
+    more: document.querySelectorAll('#timeline .post-moretext').length,
+    folded: document.querySelectorAll('#timeline .post-text.folded').length,
+    txt: (document.querySelector('#timeline .post-moretext') || {}).textContent || ''
+  }))()`);
+  check('冷启动后一进时间线就立刻有「更多」（无需等待或刷新）',
+    coldFold.more === 1 && coldFold.folded === 1,
+    `more=${coldFold.more} folded=${coldFold.folded} "${coldFold.txt.trim()}"`);
+
   console.log('\n[6c] 查看详情：时间与正文都按原文换行');
   await cdp.evalJs(`window.__diary__.showDetail(window.__diary__.State.entries[0])`);
   await sleep(500);
@@ -616,6 +647,61 @@ try {
   const heatToast = await cdp.evalJs(`(() => { const t = document.getElementById('toast');
     return { show: t.classList.contains('show'), text: t.textContent }; })()`);
   check('点热力图格子弹出那天信息', heatToast.show && /月\d+日.*\d+ 字/.test(heatToast.text), heatToast.text);
+  // ★ 月度柱：点一下看这个月写了多少字、多少篇（和热力图同一个套路；手机没有 hover）
+  const monthTips = await cdp.evalJs(`(() => {
+    const cols = [...document.querySelectorAll('.bars-month .bar-col')];
+    const lit = cols.find(c => c.querySelector('.bar.has'));
+    return { count: cols.length, lit: lit ? lit.title : '', first: cols[0] ? cols[0].title : '' };
+  })()`);
+  check('月度柱每根都带「字数 + 篇数」提示', /^\d+ 月 · \d+ 字 · \d+ 篇$/.test(monthTips.lit), monthTips.lit);
+  check('没写过的月份如实说「还没写」', /月 · 还没写$/.test(monthTips.first), monthTips.first);
+  await cdp.evalJs(`(() => {
+    const c = [...document.querySelectorAll('.bars-month .bar-col')].find(x => x.querySelector('.bar.has'));
+    if (c) c.click(); return !!c; })()`);
+  const monthToast = await cdp.evalJs(`(() => { const t = document.getElementById('toast');
+    return { show: t.classList.contains('show'), text: t.textContent }; })()`);
+  check('点月度柱弹出该月的字数与篇数',
+    monthToast.show && /^\d+ 月 · \d+ 字 · \d+ 篇$/.test(monthToast.text.trim()), monthToast.text);
+  // ★ 走势图：点一下看那个月写了几篇、平均多少字（跨年时带年份）
+  const trendTips = await cdp.evalJs(`(() => {
+    const cols = [...document.querySelectorAll('.trend-dots .trend-col')];
+    const lit = cols.find(c => /平均/.test(c.title));
+    return { count: cols.length, lit: lit ? lit.title : '', first: cols[0] ? cols[0].title : '' };
+  })()`);
+  check('走势图每个点都带「年份 + 篇数 + 平均字数」提示',
+    trendTips.count === 6 && /^\d{4} 年 \d+ 月 · \d+ 篇 · 平均 \d+ 字$/.test(trendTips.lit), trendTips.lit);
+  check('走势图没写过的月份如实说「还没写」', /年 \d+ 月 · 还没写$/.test(trendTips.first), trendTips.first);
+  await cdp.evalJs(`(() => {
+    const c = [...document.querySelectorAll('.trend-dots .trend-col')].find(x => /平均/.test(x.title));
+    if (c) c.click(); return !!c; })()`);
+  const trendToast = await cdp.evalJs(`(() => { const t = document.getElementById('toast');
+    return { show: t.classList.contains('show'), text: t.textContent }; })()`);
+  check('点走势图的点弹出该月篇数与平均字数',
+    trendToast.show && /年 \d+ 月 · \d+ 篇 · 平均 \d+ 字/.test(trendToast.text), trendToast.text);
+  // ★ 写作时段：两组柱子（一天 24 根 / 一周 7 根）点哪根报哪根
+  const slotTips = await cdp.evalJs(`(() => {
+    const bars = [...document.querySelectorAll('#statInner .bars.sm')];
+    const hourCols = bars[0] ? [...bars[0].querySelectorAll('.bar-col')] : [];
+    const dowCols = bars[1] ? [...bars[1].querySelectorAll('.bar-col')] : [];
+    const hLit = hourCols.find(c => /篇$/.test(c.title));
+    const dLit = dowCols.find(c => /篇$/.test(c.title));
+    return { hourN: hourCols.length, dowN: dowCols.length,
+             hTip: hLit ? hLit.title : (hourCols[0] || {}).title || '',
+             dTip: dLit ? dLit.title : (dowCols[0] || {}).title || '' };
+  })()`);
+  check('时段图两组柱都带提示（一天 24 / 一周 7）',
+    slotTips.hourN === 24 && slotTips.dowN === 7
+    && /^(凌晨|早上|上午|中午|下午|晚上) \d+ 点 · /.test(slotTips.hTip)
+    && /^周[一二三四五六日] · /.test(slotTips.dTip),
+    `${slotTips.hourN}/${slotTips.dowN} · "${slotTips.hTip}" · "${slotTips.dTip}"`);
+  await cdp.evalJs(`(() => {
+    const bars = [...document.querySelectorAll('#statInner .bars.sm')];
+    const c = [...bars[0].querySelectorAll('.bar-col')].find(x => /篇$/.test(x.title));
+    if (c) c.click(); return !!c; })()`);
+  const slotToast = await cdp.evalJs(`(() => { const t = document.getElementById('toast');
+    return { show: t.classList.contains('show'), text: t.textContent }; })()`);
+  check('点时段图的柱子弹出该时段的篇数',
+    slotToast.show && /(凌晨|早上|上午|中午|下午|晚上) \d+ 点 · \d+ 篇/.test(slotToast.text), slotToast.text);
   // ★ 写作时段：24 根（一天）+ 7 根（一周），共用一张卡片
   check('时段图 = 24 + 7 根柱', st.slotBars === 31, `${st.slotBars} 根`);
   check('样本不足时不硬说「最多：X 点」', /再写几篇/.test(st.rhythmNote), st.rhythmNote);

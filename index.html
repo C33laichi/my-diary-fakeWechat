@@ -751,6 +751,13 @@ input,textarea{font-family:inherit}
 .trend-val{position:absolute;font-size:10.5px;color:var(--sub);transform:translate(-50%,0);left:50%;white-space:nowrap}
 .trend-cap{position:absolute;bottom:-18px;width:100%;text-align:center;font-size:11px;color:var(--sub)}
 .bars.sm .bar-cap{font-size:10.5px}
+/* 月度柱可点：点一下看这个月的字数与篇数（手机没有 hover，靠 title + toast） */
+.bars-month .bar-col{cursor:pointer}
+.bars-month .bar-col:active{opacity:.7}
+/* 走势图与时段图同样可点 */
+.trend-col{cursor:pointer}
+.bars.sm .bar-col{cursor:pointer}
+.bars.sm .bar-col:active{opacity:.7}
 .rh-sub{font-size:12.5px;color:var(--sub);margin:0 0 10px}
 .rh-sub.mt{margin-top:16px}
 .stat-note{margin-top:14px;font-size:12px;color:var(--sub);text-align:center;line-height:1.7}
@@ -2317,7 +2324,20 @@ function renderTimeline() {
  *    所以这里用"宽度+字数"当签名：面板变可见或宽度变化（旋转/改字号）时重跑一次。
  */
 function syncPostFold(root) {
-  var w = (root || document).clientWidth || window.innerWidth;
+  /*
+   * ⚠️ 面板不可见时（display:none）clientWidth 是 0，此时一个 rect 都量不到。
+   *    这里**必须直接退出、且不能写 foldSig**。
+   *
+   *    踩过的坑：原先写的是 `clientWidth || window.innerWidth` —— 那个 `||` 兜底
+   *    让隐藏态的宽度(0)变成了视口宽(390)，于是签名与"可见时"**一模一样**。
+   *    而 boot 里的 renderTimeline 恰好跑在面板隐藏时，它写下的签名把可见态的
+   *    测量机会一起占掉了：之后切到时间线，签名命中 → 直接 return → 长文永远
+   *    不折叠、也没有「更多」（用户报："一打开 APP 没有立即显示更多"）。
+   */
+  var host = root || document;
+  var w = host.clientWidth;
+  if (!w) return;                                 // 不可见：不量、也不留签名，等可见时再量
+
   $$('.post-text', root).forEach(function (body) {
     // 用户手动展开过的保持展开 —— 重量一次就把它折回去会很突兀
     if (body.classList.contains('expanded')) { body.dataset.foldSig = ''; return; }
@@ -2706,11 +2726,12 @@ function heatmapHtml(byDay) {
  * 「21 点写得最多」和「晚 8 点到 11 点都在写」是两种生活。
  * 复用月度柱状图的 .bars 结构，只是矮一档。
  */
-function rhythmBars(bin, labels, topIdx) {
+function rhythmBars(bin, labels, topIdx, tips) {
   var max = Math.max.apply(null, bin.concat([1]));
   return '<div class="bars sm">' + bin.map(function (n, i) {
     var h = Math.max(n ? Math.round(n / max * 100) : 0, n ? 4 : 3);
-    return '<div class="bar-col">' +
+    var tip = (tips && tips[i]) ? tips[i] : '';
+    return '<div class="bar-col"' + (tip ? ' title="' + escapeHtml(tip) + '"' : '') + '>' +
       '<div class="bar-track"><div class="bar' + (n ? (i === topIdx ? ' has top' : ' has') : '') +
         '" style="height:' + h + '%"></div></div>' +
       '<div class="bar-cap">' + (labels[i] || '&nbsp;') + '</div>' +
@@ -2800,7 +2821,8 @@ function renderStats() {
         tn++; tc += (e.text ? e.text.length : 0);
       }
     });
-    trend.push({ m: tm.getMonth() + 1, n: tn, avg: tn ? Math.round(tc / tn) : 0 });
+    // 带上年份：近 6 个月会跨年，点开时只写"10 月"会分不清是哪一年
+    trend.push({ y: tm.getFullYear(), m: tm.getMonth() + 1, n: tn, avg: tn ? Math.round(tc / tn) : 0 });
   }
   var trendHas = trend.some(function (t) { return t.n; });
   var trendCur = trend[5], trendPre = trend[4];
@@ -2810,13 +2832,9 @@ function renderStats() {
     trendNote = tdv === 0 ? '和上月持平'
       : (tdv > 0 ? '比上月多 ' + tdv + ' 字' : '比上月少 ' + (-tdv) + ' 字');
   }
-  // 折线图：用柱高百分比画点，再连折线。数值直接标在柱顶（手机上也读得清）
+  // 折线图：用柱高百分比画点，再连折线（点数不多，直接内联在下面的 HTML 里）。
+  // 数值直接标在点的上方（手机上也读得清）
   var trendMax = Math.max.apply(null, trend.map(function (t) { return t.avg; }).concat([1]));
-  var trendPath = trend.map(function (t, i) {
-    var x = (i + 0.5) / 6 * 100;
-    var y = 100 - (t.avg / trendMax * 82);
-    return (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1);
-  }).join(' ');
 
   /* ---------- 内容：在写什么 ---------- */
   var lens = list.map(function (e) { return e.text ? e.text.length : 0; });
@@ -2860,6 +2878,13 @@ function renderStats() {
   var rhythmNote = (bestHour >= 0 && bestDow >= 0)
     ? '最多：' + hourLabel(bestHour) + ' · ' + DOW[bestDow]
     : '再写几篇会更准';
+  // 时段图每根柱的提示：点一下看这个时段写了几篇（手机没有 hover）
+  var hourTips = hourBin.map(function (n, h) {
+    return hourLabel(h) + ' · ' + (n ? n + ' 篇' : '没写过');
+  });
+  var dowTips = dowBin.map(function (n, i) {
+    return DOW[i] + ' · ' + (n ? n + ' 篇' : '没写过');
+  });
 
   $('#statInner').innerHTML =
     // ① 概况：年度热力图 + 三张卡 + 压缩后的存量三行。
@@ -2903,7 +2928,11 @@ function renderStats() {
           monthsN.reduce(function (a, b) { return a + b; }, 0) + ' 篇</span></div>' +
         '<div class="bars bars-month">' + months.map(function (n, i) {
           var h = Math.round(n / max * 100);
-          return '<div class="bar-col">' +
+          var mn = monthsN[i];
+          // 柱子自带该月的「字数 + 篇数」——标题栏只报最高月和总数，
+          // 具体某个月写了多少篇得点开看。title 同时供桌面 hover 与手机点击（见下方 toast）
+          var tip = (i + 1) + ' 月 · ' + (mn ? n + ' 字 · ' + mn + ' 篇' : '还没写');
+          return '<div class="bar-col" title="' + escapeHtml(tip) + '">' +
             '<div class="bar-num">' + (n ? (n >= 1000 ? (Math.round(n / 100) / 10) + 'k' : n) : '') + '</div>' +
             '<div class="bar-track"><div class="bar' + (n ? ' has' : '') +
               '" style="height:' + Math.max(h, 2) + '%"></div></div>' +
@@ -2924,7 +2953,9 @@ function renderStats() {
             // 点用 bottom 定位、线用 y（距顶部）定位 —— 两套坐标要换算：
             // bottom = avg/max*82，正好是 100-y。不换算的话点永远不落在线上（已踩）
             var fromBottom = (t.avg / trendMax * 82);
-            return '<div class="trend-col">' +
+            var tip = t.y + ' 年 ' + t.m + ' 月 · ' +
+              (t.n ? t.n + ' 篇 · 平均 ' + t.avg + ' 字' : '还没写');
+            return '<div class="trend-col" title="' + escapeHtml(tip) + '">' +
               '<div class="trend-val"' + (t.n ? ' style="bottom:' + (fromBottom + 6).toFixed(1) + '%"' : '') + '>' +
                 (t.n ? t.avg : '') + '</div>' +
               '<i style="bottom:' + fromBottom.toFixed(1) + '%"></i>' +
@@ -2935,8 +2966,8 @@ function renderStats() {
       '</div>' +
       '<div class="chart-card">' +
         '<div class="chart-title">写作时段<span>' + escapeHtml(rhythmNote) + '</span></div>' +
-        '<div class="rh-sub">一天里</div>' + rhythmBars(hourBin, hourLabels, bestHour) +
-        '<div class="rh-sub mt">一周里</div>' + rhythmBars(dowBin, DOW, bestDow) +
+        '<div class="rh-sub">一天里</div>' + rhythmBars(hourBin, hourLabels, bestHour, hourTips) +
+        '<div class="rh-sub mt">一周里</div>' + rhythmBars(dowBin, DOW, bestDow, dowTips) +
       '</div>' +
       '<div class="stat-rows">' +
         statRow('近 7 天', list.filter(function (e) {
@@ -2974,6 +3005,33 @@ function renderStats() {
       if (t.classList && t.classList.contains('heat-c') && t.title) toast(t.title);
     });
   }
+
+  // 月度柱：点一下弹出那个月写了多少字、多少篇。
+  // 手机上柱子只有十几像素宽、又没有 hover，所以整列（含月份数字）都算点击区。
+  var bm = $('#statInner .bars-month');
+  if (bm) {
+    bm.addEventListener('click', function (ev) {
+      var col = ev.target && ev.target.closest ? ev.target.closest('.bar-col') : null;
+      if (col && col.title) toast(col.title);
+    });
+  }
+
+  // 走势图的点：点一下看在那个月写了几篇、平均多少字
+  var td = $('#statInner .trend-dots');
+  if (td) {
+    td.addEventListener('click', function (ev) {
+      var col = ev.target && ev.target.closest ? ev.target.closest('.trend-col') : null;
+      if (col && col.title) toast(col.title);
+    });
+  }
+
+  // 写作时段（一天里 / 一周里）：两组柱子共用同一套委托，点哪根报哪根
+  $$('#statInner .bars.sm').forEach(function (bar) {
+    bar.addEventListener('click', function (ev) {
+      var col = ev.target && ev.target.closest ? ev.target.closest('.bar-col') : null;
+      if (col && col.title) toast(col.title);
+    });
+  });
 }
 
 /* ---------------- 图片查看器 ---------------- */
