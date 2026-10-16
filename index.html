@@ -160,6 +160,27 @@ input,textarea{font-family:inherit}
   border-top:.5px solid var(--line);position:sticky;top:0;z-index:2;
 }
 [data-theme="dark"] .year-divider{background:#1C1C1E}
+/* ---------------- 时间筛选条（时间线 / 相册共用） ----------------
+   做成两行 chip：第一行年份（≥2 个年份才出现），选中某年后第二行给该年有记录的月份。
+   横向滚动而不是换行铺满 —— 年份一多（比如跨了四五年）换行会把列表顶到屏幕外。
+   只列出**有数据**的年月：空的月份点进去什么都没有，是个纯粹的噪音（统计页同理）。 */
+.timebar{background:var(--card);border-bottom:.5px solid var(--line);padding:10px 0 2px}
+.timebar[hidden]{display:none}
+.tb-row{
+  display:flex;gap:7px;padding:0 14px 8px;overflow-x:auto;
+  scrollbar-width:none;-webkit-overflow-scrolling:touch;
+}
+.tb-row::-webkit-scrollbar{display:none}
+.tb-chip{
+  flex:0 0 auto;padding:5px 13px;border:0;border-radius:14px;
+  font-size:13px;line-height:1.3;background:var(--fill);color:var(--text);
+  cursor:pointer;-webkit-tap-highlight-color:transparent;
+  transition:background .15s,color .15s;
+}
+.tb-chip:active{opacity:.75}
+.tb-chip.on{background:var(--green);color:#fff;font-weight:500}
+/* 筛选生效时，给「正在看哪一段」一个明确的交代，免得以为日记丢了 */
+.tb-note{padding:0 14px 8px;font-size:12px;color:var(--sub)}
 .post{
   display:flex;gap:10px;padding:14px;background:var(--card);
   border-bottom:.5px solid var(--line);position:relative;
@@ -1041,6 +1062,7 @@ input,textarea{font-family:inherit}
             <div class="me-stat" id="meStat"></div>
           </div>
         </div>
+        <div class="timebar" id="tlTimebar" hidden></div>
         <div class="timeline" id="timeline"></div>
       </div>
     </div>
@@ -1055,6 +1077,7 @@ input,textarea{font-family:inherit}
       <span class="nav-title">相册</span>
     </header>
     <div class="scroll" id="galleryScroll">
+      <div class="timebar" id="galTimebar" hidden></div>
       <div class="gal-inner" id="galInner"></div>
     </div>
   </section>
@@ -2058,6 +2081,15 @@ function hydrateImages(root) {
 var State = {
   entries: [],
   tab: 'home',
+  /*
+   * 时间筛选：时间线与相册**各一份**，不能共用 ——
+   * 两边可筛的月份本来就不同（只有图片才进相册，某个月可能写了日记但没配图），
+   * 共用一份会出现"相册里点了个空的月份"。
+   */
+  tlFilter: { y: null, m: null },
+  galFilter: { y: null, m: null },
+  tlIdx: null,      // 最近一次算出的年月索引，点击 chip 时复用
+  galIdx: null,
   /**
    * 当前标签是怎么进来的：'tile'（首页桌面磁贴）/ 'tab'（底部标签栏）。
    * 用途只有一个 —— 决定左上角要不要显示「返回首页」：
@@ -2230,12 +2262,142 @@ document.documentElement.style.setProperty('--post-fold-lines', POST_FOLD_LINES)
  */
 var COVER_BASE_H = 250;
 
+/* ==========================================================================
+   时间筛选：先选年、再选该年有记录的月份
+   —— 两个页面共用这套工具函数，但各自持有筛选状态（见 State.tlFilter）
+   ========================================================================== */
+
+/** 从一批带时间戳的项里算出 年 → 月 的可用索引（只含有数据的年月） */
+function buildTimeIndex(list) {
+  var years = {}, order = [];
+  list.forEach(function (x) {
+    var d = new Date(x.at != null ? x.at : x.createdAt);
+    var y = d.getFullYear(), m = d.getMonth() + 1;
+    if (!years[y]) { years[y] = {}; order.push(y); }
+    years[y][m] = (years[y][m] || 0) + 1;
+  });
+  order.sort(function (a, b) { return b - a; });        // 新 → 旧
+  return { years: years, order: order };
+}
+
+/** 按 {y,m} 过滤；两者都为 null 即不筛选 */
+function filterByTime(list, f) {
+  if (f.y == null && f.m == null) return list.slice();
+  return list.filter(function (e) {
+    var d = new Date(e.at != null ? e.at : e.createdAt);
+    if (f.y != null && d.getFullYear() !== f.y) return false;
+    if (f.m != null && (d.getMonth() + 1) !== f.m) return false;
+    return true;
+  });
+}
+
+/** 当前生效的年份：只跨一个年份时那一个就是默认年，不用用户再点一次 */
+function activeYear(idx, f) {
+  if (f.y != null) return f.y;
+  return (idx && idx.order.length === 1) ? idx.order[0] : null;
+}
+
+function filterLabel(f) {
+  if (f.y == null && f.m == null) return '';
+  return (f.y != null ? f.y + '年' : '') + (f.m != null ? f.m + '月' : '');
+}
+
+/**
+ * 渲染一条筛选条。
+ * @param {Element} host 容器
+ * @param {{order:number[],years:Object}} idx
+ * @param {{y:?number,m:?number}} f 当前筛选
+ * @param {string} unit 计数单位（篇 / 张）
+ */
+function renderTimebar(host, idx, f, unit) {
+  if (!host) return;
+  var buckets = 0;
+  idx.order.forEach(function (y) { buckets += Object.keys(idx.years[y]).length; });
+  // 只有一段（比如所有日记都在同一个月）时，筛选没有意义 —— 干脆不出现，别占地方
+  if (buckets < 2) { host.innerHTML = ''; host.hidden = true; return; }
+  host.hidden = false;
+
+  var showYears = idx.order.length >= 2;
+  var ay = activeYear(idx, f);
+  var html = '';
+
+  if (showYears) {
+    html += '<div class="tb-row">' +
+      '<button class="tb-chip' + (f.y == null ? ' on' : '') + '" data-tb="y" data-v="">全部</button>' +
+      idx.order.map(function (y) {
+        var n = 0;
+        Object.keys(idx.years[y]).forEach(function (m) { n += idx.years[y][m]; });
+        return '<button class="tb-chip' + (f.y === y ? ' on' : '') + '" data-tb="y" data-v="' + y + '">' +
+          y + '年 · ' + n + unit + '</button>';
+      }).join('') + '</div>';
+  }
+  if (ay != null) {
+    var months = Object.keys(idx.years[ay] || {}).map(Number).sort(function (a, b) { return a - b; });
+    html += '<div class="tb-row">' +
+      '<button class="tb-chip' + (f.m == null ? ' on' : '') + '" data-tb="m" data-v="">全年</button>' +
+      months.map(function (m) {
+        return '<button class="tb-chip' + (f.m === m ? ' on' : '') + '" data-tb="m" data-v="' + m + '">' +
+          m + '月 · ' + idx.years[ay][m] + unit + '</button>';
+      }).join('') + '</div>';
+  }
+  host.innerHTML = html;
+}
+
+/** chip 的点击委托：data-tb 说明点的是年还是月，data-v 是值（空串 = 不限） */
+function bindTimebar(host, onPick) {
+  if (!host) return;
+  host.addEventListener('click', function (ev) {
+    var b = ev.target && ev.target.closest ? ev.target.closest('[data-tb]') : null;
+    if (!b) return;
+    var raw = b.getAttribute('data-v');
+    onPick(b.getAttribute('data-tb'), raw === '' ? null : Number(raw));
+  });
+}
+
+/** 统一的点击处理：换年就重置月份；选月时把年份补齐（月份行可能来自"只有一个年份"的情况） */
+function applyTimePick(f, idx, kind, v) {
+  if (kind === 'y') { f.y = v; f.m = null; }
+  else { f.m = v; f.y = activeYear(idx, f); }
+}
+
+/**
+ * 新写/改过的日记如果落在当前筛选之外，就自动把筛选放开 ——
+ * 否则用户刚发完一篇，会发现列表里找不到它，像是"丢了"。
+ */
+function ensureVisibleInFilter(ts) {
+  var d = new Date(ts);
+  [State.tlFilter, State.galFilter].forEach(function (f) {
+    if (f.y == null && f.m == null) return;
+    if (f.y != null && d.getFullYear() !== f.y) { f.y = null; f.m = null; return; }
+    if (f.m != null && (d.getMonth() + 1) !== f.m) f.m = null;
+  });
+}
+
+/** 相册的扁平图片序列（按日记时间倒序） */
+function galleryItems() {
+  var items = [];
+  State.entries.forEach(function (e) {
+    (e.images || []).forEach(function (iid) {
+      items.push({ id: iid, entryId: e.id, at: e.createdAt });
+    });
+  });
+  return items;
+}
+
 function renderTimeline() {
   var wrap = $('#timeline');
-  var list = State.entries;
+  var idx = buildTimeIndex(State.entries);
+  State.tlIdx = idx;
+  renderTimebar($('#tlTimebar'), idx, State.tlFilter, '篇');
+  var list = filterByTime(State.entries, State.tlFilter);
+  var label = filterLabel(State.tlFilter);
 
-  $('#meStat').textContent = list.length
-    ? ('共 ' + list.length + ' 篇日记' + (list[0] ? ' · 最近更新 ' + TimeFmt.rel(list[0].createdAt) : ''))
+  // 筛选生效时交代清楚"在哪个范围里、一共多少篇" —— 否则突然只剩 3 篇会以为日记丢了
+  $('#meStat').textContent = State.entries.length
+    ? (label
+        ? (label + ' · ' + list.length + ' 篇 / 共 ' + State.entries.length + ' 篇')
+        : ('共 ' + State.entries.length + ' 篇日记' +
+           (State.entries[0] ? ' · 最近更新 ' + TimeFmt.rel(State.entries[0].createdAt) : '')))
     : '还没有日记';
 
   if (!list.length) {
@@ -2569,10 +2731,13 @@ function renderDesktop() {
 /* ---------------- 相册 ---------------- */
 function renderGallery() {
   var inner = $('#galInner');
-  var items = [];   // 按时间倒序的全局图片序列
-  State.entries.forEach(function (e) {
-    (e.images || []).forEach(function (iid) { items.push({ id: iid, entryId: e.id, at: e.createdAt }); });
-  });
+  var items = galleryItems();   // 按时间倒序的全局图片序列
+  // 先按筛选范围截断再建索引：查看器也只在当前范围里翻页，
+  // 和"筛了 9 月就只在 9 月里看"的直觉保持一致（否则点开一张会翻到别的月份去）
+  var idx = buildTimeIndex(items);
+  State.galIdx = idx;
+  renderTimebar($('#galTimebar'), idx, State.galFilter, '张');
+  items = filterByTime(items, State.galFilter);
   State.galleryList = items.map(function (x) { return x.id; });
 
   if (!items.length) {
@@ -2587,8 +2752,13 @@ function renderGallery() {
     if (!groups[key]) { groups[key] = []; order.push(key); }
     groups[key].push(it);
   });
+  var galLabel = filterLabel(State.galFilter);
   inner.innerHTML =
-    '<div class="pane-head"><span>共 ' + items.length + ' 张 · ' + order.length + ' 个月份</span></div>' +
+    '<div class="pane-head"><span>' +
+      (galLabel
+        ? (galLabel + ' · ' + items.length + ' 张 / 共 ' + totalImageCount() + ' 张')
+        : ('共 ' + items.length + ' 张 · ' + order.length + ' 个月份')) +
+    '</span></div>' +
     order.map(function (k) {
       return '<div class="gal-month"><div class="gal-month-title">' + k + '（' + groups[k].length + ' 张）</div>' +
         '<div class="gal-grid">' + groups[k].map(function (it) {
@@ -3626,6 +3796,9 @@ function publishCore(text, imgs) {
     }).then(function () {
       State.editingId = null;
       State.draftImages = [];
+      // 这篇的时间如果落在当前筛选之外（比如正筛着 9 月、现在发的是 10 月），
+      // 就把筛选放开 —— 否则发表后切回时间线看不到它，像是没发出去
+      ensureVisibleInFilter((old && old.createdAt) ? old.createdAt : now);
       hideScreen('#screen-composer');
       return loadHome();
     }).then(function () {
@@ -4388,6 +4561,16 @@ function bindEvents() {
   });
 
   /* --- 相册：点击进入查看器（使用全局图片序列，可跨日记连续滑动） --- */
+  /* --- 时间筛选条：时间线 / 相册各一条 --- */
+  bindTimebar($('#tlTimebar'), function (kind, v) {
+    applyTimePick(State.tlFilter, State.tlIdx || buildTimeIndex(State.entries), kind, v);
+    renderTimeline();
+  });
+  bindTimebar($('#galTimebar'), function (kind, v) {
+    applyTimePick(State.galFilter, State.galIdx || buildTimeIndex(galleryItems()), kind, v);
+    renderGallery();
+  });
+
   $('#galInner').addEventListener('click', function (ev) {
     var a = ev.target.closest('[data-gidx]');
     if (!a) return;
@@ -5061,6 +5244,8 @@ window.__diary__ = {
     State.draftImages = [];
     return publishCore(TextFmt.normalize(text).trim(), []);
   },
+  // 回归脚本要注入跨年月的数据后手动重绘（时间线 / 相册的年月筛选）
+  renderTimeline: renderTimeline, renderGallery: renderGallery, galleryItems: galleryItems,
   POST_FOLD_LINES: POST_FOLD_LINES, COVER_HOLD_MS: COVER_HOLD_MS
 };
 

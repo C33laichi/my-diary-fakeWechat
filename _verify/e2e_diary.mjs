@@ -557,6 +557,9 @@ try {
     await cdp.evalJs(`document.querySelectorAll('#screen-gallery h2').length`) === 0);
   check('图片真实渲染', gal.rendered === 1, `渲染 ${gal.rendered}`);
   check('手机档相册 3 列', gal.cols === 3);
+  // ★ 把这张真图的 id 存到 window 上：后面 [18c] 要注入跨年月的数据来测筛选，
+  //   那时 State.entries 已被替换成无图的假数据，再去取图片 id 就只能拿到空
+  await cdp.evalJs(`(() => { window.__testPid = (window.__diary__.galleryItems()[0] || {}).id || ''; return window.__testPid; })()`);
   await cdp.shot('14-gallery.png');
   await cdp.clickSel('.gal-grid a');
   await sleep(600);
@@ -1804,6 +1807,132 @@ try {
     geo.mark ? `注脚 ${geo.mark.iW}px / 数值区 ${geo.mark.vW}px` : '（没有注脚）');
   // 留一张"柱高有差异 + 长数值换行"的实拍图，比只有 1 篇数据的截图更能说明这两处修复
   await cdp.shot('16c-stats-geometry.png');
+
+  /**
+   * [18c] 时间线 / 相册的年月筛选。
+   * 注入跨年月的数据（不落库，和 [18b] 一样只改内存里的 State.entries），
+   * 因为前面的用例都只有 1 篇日记，撑不出"选年份 / 选月份"这两个层级。
+   *
+   * 两个容易做错的点：
+   *  ① 只跨一个月份时不该出现筛选条 —— 筛了也只有那一个选项，纯噪音。
+   *  ② 相册只按**有图片的月份**建索引（某月写了日记但没配图，相册里就不该有它），
+   *     所以两个页面必须各自持有筛选状态，不能共用。
+   */
+  console.log('\n[18c] 时间线 / 相册：按年月筛选');
+  await cdp.viewport(390, 844, true);
+  await sleep(400);
+  // ⚠️ [18b] 结束时停在统计页 —— 它是盖在标签页之上的一个独立 screen，
+  //    不关掉就切 tab 的话，点击会命中统计卡片（点 chip 时实际命中 .stat-card，踩过）
+  await cdp.evalJs(`(() => {
+    const s = document.getElementById('screen-stats');
+    const b = document.getElementById('btnStatsBack');
+    if (s && s.classList.contains('active') && b) b.click();
+    return !!(s && s.classList.contains('active')); })()`);
+  await sleep(600);
+  await cdp.evalJs(`window.__diary__.switchTab('timeline')`);
+  await sleep(500);
+  await cdp.evalJs(`(() => { const s = document.querySelector('#screen-timeline .scroll'); if (s) s.scrollTop = 0; return true; })()`);
+  // ① 只有同一个月：出现筛选条是纯噪音
+  const only1 = await cdp.evalJs(`(() => {
+    const mk = (y, m, d, i) => ({ id: 'one-' + i, text: '同一月的第 ' + i + ' 篇', images: [],
+      createdAt: new Date(y, m - 1, d, 10, 0, 0).getTime(), updatedAt: 0 });
+    window.__diary__.State.entries = [mk(2026, 9, 20, 1), mk(2026, 9, 5, 2)];
+    window.__diary__.State.tlFilter = { y: null, m: null };
+    window.__diary__.renderTimeline();
+    return document.getElementById('tlTimebar').hidden; })()`);
+  check('只跨一个月份时不显示筛选条（避免无意义的一行）', only1 === true, `hidden=${only1}`);
+
+  // ② 造跨 2 年 3 个月的数据：2026-10(1篇有图) / 2026-09(3篇，2篇有图) / 2025-11(2篇无图)
+  // 从库里（而不是内存）取一张真图 id：内存里的 entries 已被上面的用例换成假的，
+  // 而 window 上的临时变量也可能被中途的页面重载冲掉 —— 只有 Store 里的才是稳的
+  await cdp.evalJs(`(() => {
+    window.__diary__.Store.listEntries().then(function (real) {
+      var out = '';
+      (real || []).forEach(function (e) { if (!out && e.images && e.images.length) out = e.images[0]; });
+      window.__testPid = out || '';
+    });
+    return true; })()`);
+  await sleep(300);
+  const pid = await cdp.evalJs(`window.__testPid || ''`);
+
+  const seed = await cdp.evalJs(`(() => {
+    const pid = ${JSON.stringify(pid)};   // 库里的真图 id，让相册也有东西可筛
+    const mk = (y, m, d, i, imgs) => ({ id: 'tf-' + y + m + i, text: '筛选测试 ' + y + '/' + m + ' #' + i,
+      images: imgs || [], createdAt: new Date(y, m - 1, d, 10, 0, 0).getTime(), updatedAt: 0 });
+    window.__diary__.State.entries = [
+      mk(2026, 10, 3, 1, pid ? [pid] : []),
+      mk(2026, 9, 20, 1, pid ? [pid] : []),
+      mk(2026, 9, 12, 2, pid ? [pid] : []),
+      mk(2026, 9, 5, 3),
+      mk(2025, 11, 8, 1),
+      mk(2025, 11, 2, 2)
+    ];
+    window.__diary__.State.tlFilter = { y: null, m: null };
+    window.__diary__.State.galFilter = { y: null, m: null };
+    window.__diary__.renderTimeline();
+    return { pid: pid,
+             rows: document.querySelectorAll('#tlTimebar .tb-row').length,
+             chips: [...document.querySelectorAll('#tlTimebar .tb-chip')].map(b => b.textContent.trim()),
+             posts: document.querySelectorAll('#timeline .post').length }; })()`);
+  check('跨年月时给出年份行（全部 + 各年，并标篇数）',
+    seed.rows === 1 && seed.chips[0] === '全部' &&
+      /^2026年 · 4篇$/.test(seed.chips[1]) && /^2025年 · 2篇$/.test(seed.chips[2]),
+    seed.chips.join(' | '));
+  check('未选年份时先不铺月份（不然一行塞 12 个月）', seed.rows === 1, `${seed.rows} 行`);
+  check('筛选条本身不改变列表（默认仍是全部 6 篇）', seed.posts === 6, `${seed.posts} 篇`);
+
+  await cdp.clickSel('#tlTimebar .tb-chip[data-v="2026"]');
+  await sleep(400);
+  const y26 = await cdp.evalJs(`(() => {
+    const rows = [...document.querySelectorAll('#tlTimebar .tb-row')];
+    return { rows: rows.length,
+             months: [...rows[1].querySelectorAll('.tb-chip')].map(b => b.textContent.trim()),
+             posts: document.querySelectorAll('#timeline .post').length,
+             stat: document.getElementById('meStat').textContent }; })()`);
+  check('选中年份后展开该年**有记录**的月份（全年 + 9月 + 10月）',
+    y26.rows === 2 && y26.months[0] === '全年' &&
+      /^9月 · 3篇$/.test(y26.months[1]) && /^10月 · 1篇$/.test(y26.months[2]),
+    y26.months.join(' | '));
+  check('选中 2026 年后只剩该年 4 篇', y26.posts === 4, `${y26.posts} 篇`);
+  check('筛选时交代清楚范围与总数', /2026年 · 4 篇 \/ 共 6 篇/.test(y26.stat), y26.stat);
+
+  await cdp.clickSel('#tlTimebar .tb-chip[data-v="9"]');
+  await sleep(400);
+  const m9f = await cdp.evalJs(`(() => ({ posts: document.querySelectorAll('#timeline .post').length,
+    stat: document.getElementById('meStat').textContent }))()`);
+  check('选中 9 月后只剩 3 篇', m9f.posts === 3, `${m9f.posts} 篇`);
+  check('月份筛选也交代总数（2026年9月 · 3 篇 / 共 6 篇）',
+    /2026年9月 · 3 篇 \/ 共 6 篇/.test(m9f.stat), m9f.stat);
+
+  await cdp.clickSel('#tlTimebar .tb-chip[data-v=""]');
+  await sleep(400);
+  check('点「全部」回到 6 篇',
+    await cdp.evalJs(`document.querySelectorAll('#timeline .post').length`) === 6);
+
+  // ③ 相册：只对有图片的月份建索引，且状态与时间线彼此独立
+  await cdp.evalJs(`window.__diary__.switchTab('gallery')`);
+  await sleep(650);
+  const galBar = await cdp.evalJs(`(() => ({
+    hidden: document.getElementById('galTimebar').hidden,
+    rows: document.querySelectorAll('#galTimebar .tb-row').length,
+    chips: [...document.querySelectorAll('#galTimebar .tb-chip')].map(b => b.textContent.trim()),
+    months: document.querySelectorAll('.gal-month').length }))()`);
+  check('相册筛选条只按有图片的月份建索引（不列出没图的 2025-11）',
+    galBar.hidden === false && galBar.months === 2 && galBar.rows === 1 &&
+      galBar.chips[0] === '全年' && /^9月 · 2张$/.test(galBar.chips[1]) && /^10月 · 1张$/.test(galBar.chips[2]),
+    `${galBar.months} 组 / ${galBar.chips.join(' | ')} / pid=${pid ? '有' : '空'}`);
+
+  await cdp.clickSel('#galTimebar .tb-chip[data-v="9"]');
+  await sleep(450);
+  const gal9 = await cdp.evalJs(`(() => ({
+    months: document.querySelectorAll('.gal-month').length,
+    head: (document.querySelector('.pane-head') || {}).textContent || '',
+    tlFilter: JSON.stringify(window.__diary__.State.tlFilter) }))()`);
+  check('相册筛到 9 月只剩该月一组', gal9.months === 1, `${gal9.months} 组`);
+  check('相册范围标注带总数', /2026年9月 · 2 张 \/ 共 3 张/.test(gal9.head), gal9.head);
+  check('相册与时间线各持一份筛选（互不串台）',
+    gal9.tlFilter === '{"y":null,"m":null}', gal9.tlFilter);
+  await cdp.shot('14b-gallery-timefilter.png');
 
   console.log('\n[19] 控制台异常');
   const errs = cdp.pageErrors();
