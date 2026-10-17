@@ -14,7 +14,10 @@ const BASE = process.env.BASE || 'http://127.0.0.1:7788/';
 const PORT = 9333;
 const PIN = '135792';
 const NEWPIN = '246801';   // 改密码用例用，必须与 PIN 不同且是 6 位
-const OUT = path.resolve('shots');
+// 截图固定落在**脚本所在目录**的 shots/：这里必须用 import.meta.dirname 定位，
+// 不能写相对路径 —— 否则在仓库根执行脚本时，会在根目录多长出一份残缺副本（真实踩过）。
+// 注：本文件是 ESM（.mjs），没有 __dirname。
+const OUT = path.resolve(import.meta.dirname, 'shots');
 fs.mkdirSync(OUT, { recursive: true });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

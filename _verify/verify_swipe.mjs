@@ -14,7 +14,8 @@ const FILE = 'file:///D:/WorkBuddy/WorkPlace/wechat-diary/index.html';
 // 测试用真实照片：把任意几张 JPEG 放进这个目录即可（留空则跳过数据准备用例）
 const IMGDIR = process.env.WD_IMGDIR || 'D:/dshWorkPlace/backup-images';
 const PORT = 9419;
-const OUT = path.resolve('shots');
+// 截图固定落在脚本所在目录的 shots/（ESM 无 __dirname，用 import.meta.dirname）
+const OUT = path.resolve(import.meta.dirname, 'shots');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let pass = 0, fail = 0;
 const check = (n, ok, extra = '') => { ok ? pass++ : fail++; console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${n}${extra ? '   ' + extra : ''}`); };

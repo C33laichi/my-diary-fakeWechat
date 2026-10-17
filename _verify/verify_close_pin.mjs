@@ -33,7 +33,8 @@ const BASE = process.env.BASE || 'http://127.0.0.1:7788/';
 const PORT = 9411;
 const PIN = '135792';
 const NEWPIN = '246801';
-const OUT = path.resolve('shots');
+// 截图固定落在脚本所在目录的 shots/（ESM 无 __dirname，用 import.meta.dirname）
+const OUT = path.resolve(import.meta.dirname, 'shots');
 fs.mkdirSync(OUT, { recursive: true });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

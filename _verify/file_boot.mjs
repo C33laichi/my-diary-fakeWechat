@@ -164,7 +164,7 @@ try {
   console.log('\n[A] 正常打开（IndexedDB 可用）');
   await runFlow('A', 'idb');
   const r1 = await send('Page.captureScreenshot', { format: 'png' });
-  fs.writeFileSync(path.join('shots', '08-file-protocol.png'), Buffer.from(r1.data, 'base64'));
+  fs.writeFileSync(path.join(import.meta.dirname, 'shots', '08-file-protocol.png'), Buffer.from(r1.data, 'base64'));
 
   console.log('\n[B] 强制禁用 IndexedDB（模拟 iOS Safari / 隐私模式）');
   // 同时按住封面自动进入：B 阶段是导航新开页面，接着要断言"先显示封面页"，
@@ -181,7 +181,7 @@ try {
   await sleep(500);
   await runFlow('B', 'local');
   const r2 = await send('Page.captureScreenshot', { format: 'png' });
-  fs.writeFileSync(path.join('shots', '09-localStorage-fallback.png'), Buffer.from(r2.data, 'base64'));
+  fs.writeFileSync(path.join(import.meta.dirname, 'shots', '09-localStorage-fallback.png'), Buffer.from(r2.data, 'base64'));
 
   const errs = events.filter((e) => e.method === 'Runtime.exceptionThrown')
     .map((e) => e.params.exceptionDetails.exception?.description || e.params.exceptionDetails.text);

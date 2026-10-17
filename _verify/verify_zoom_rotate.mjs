@@ -16,7 +16,8 @@ const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const FILE = 'file:///D:/WorkBuddy/WorkPlace/wechat-diary/index.html';
 const PORT = 9377;
 // 与同目录其它脚本一致：截图落在 _verify/shots/
-const OUT = path.resolve('shots');
+// 固定到脚本所在目录（ESM 无 __dirname，用 import.meta.dirname）
+const OUT = path.resolve(import.meta.dirname, 'shots');
 fs.mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let pass = 0, fail = 0;
