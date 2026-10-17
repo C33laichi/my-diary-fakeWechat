@@ -1,5 +1,7 @@
 # 我的日记
 
+[![Docker 镜像](https://github.com/C33laichi/my-diary-fakeWechat/actions/workflows/docker.yml/badge.svg)](https://github.com/C33laichi/my-diary-fakeWechat/actions/workflows/docker.yml)
+
 一个仿微信朋友圈效果的本地私人日记应用。数据只存在你自己的设备上，不上传任何服务器。
 
 也可以打包成 Android / iOS (release目前只有安卓安装包)安装包使用（见 [`mobile/`](mobile/)）。
@@ -104,6 +106,40 @@ npm run apk:release  # 生成正式包（首次会自动生成签名证书）
 > 这两个文件已被 `.gitignore` 排除，**永远不要提交**；同时请务必备份到别处 ——
 > 以后给同一个包名发更新必须用同一份证书，丢了就再也覆盖安装不上。
 
+## Docker 部署
+
+想让它跑在一台服务器上、手机连同一个 Wi-Fi 就能写，两条命令：
+
+```bash
+docker build -t my-diary .
+docker run -d --name diary -p 8080:80 my-diary
+```
+
+然后浏览器打开 `http://<这台机器的 IP>:8080`。
+
+不想克隆仓库的话，也可以直接拉现成的镜像：
+
+```bash
+docker run -d --name diary -p 8080:80 ghcr.io/c33laichi/my-diary-fakewechat:latest
+```
+
+> ⚠️ **容器只是个发页面的，不存日记。**
+> 日记仍然写在**访问它的那个浏览器**里（IndexedDB）。
+> 换台手机打开，看到的是一份全新的空日记 —— 数据不会同步，容器里也翻不出来。
+> 要搬家请用应用内的「导出备份 → 导入备份」。
+
+### 镜像是怎么来的
+
+根目录的 [`Dockerfile`](Dockerfile) 只干一件事：把 `index.html` 丢进 `nginx:alpine` 的站点目录。
+推送到 `main` 后，[`.github/workflows/docker.yml`](.github/workflows/docker.yml) 自动构建并推到 `ghcr.io`，
+构建完还会真的起一个容器、`curl` 把页面拉下来确认是本项目文件，才算过。
+
+一个坑：Docker 镜像名只允许小写，而 GitHub 仓库名允许大写（本仓库就带大写 `W`），
+所以 workflow 里先用 `${GITHUB_REPOSITORY,,}` 转成小写再拼地址。
+
+> 第一次推送成功后，GHCR 上的包默认是 **private**，
+> 需要到仓库右侧「Packages」→ 包设置里改成 **public**，别人才 `docker pull` 得到。
+
 ## 数据与隐私
 
 - 所有数据保存在浏览器 / App 的本地存储中，**没有云端同步**。
@@ -115,6 +151,8 @@ npm run apk:release  # 生成正式包（首次会自动生成签名证书）
 
 ```
 index.html              # 网页版全部源码（唯一源文件，样式 + 结构 + 逻辑都在里面）
+Dockerfile              # 网页版容器：nginx:alpine 托管 index.html
+.github/workflows/      # CI：推 main 自动构建镜像并推到 ghcr.io
 mobile/                 # Capacitor 移动端外壳（Android / iOS）
   sync.mjs              # 把 ../index.html 同步进 www/
   setup-android.mjs     # 一键配置 Android 环境并出包

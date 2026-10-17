@@ -1,0 +1,9 @@
+# 构建上下文里只留 index.html 就够了 —— 其他都是打包/验证产物，
+# 尤其是根目录那两个 6 MB 的 APK，不排除会白白拖慢 docker build。
+.git
+.github
+_verify
+docs
+mobile
+shots
+*.apk

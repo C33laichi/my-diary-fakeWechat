@@ -1,0 +1,74 @@
+name: Docker 镜像
+
+# 只在真正影响镜像内容的文件变化时跑：
+#   index.html        → 网页内容变了，要重建
+#   Dockerfile / 本文件 → 构建方式变了，要重建
+# 只改 README、文档、截图时 CI 不会空转。
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'Dockerfile'
+      - '.github/workflows/docker.yml'
+  workflow_dispatch: # 允许在 Actions 页面手动点一下重跑
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # 拉代码
+      packages: write # 推镜像到 ghcr.io（缺这个会 403）
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          # GITHUB_TOKEN 由 Actions 自动派发，不用自己配 secret
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Docker/OCI 规范要求镜像名路径段全小写，而 GitHub 仓库名允许大写
+      # （本仓库就是 my-diary-fakeWechat）。${VAR,,} 是 Bash 的「全部转小写」，
+      # 于是这里算出来的是 ghcr.io/c33laichi/my-diary-fakewechat。
+      # 注意必须用 >> 追加而不是 > 覆盖，否则会冲掉这一步的其他输出。
+      - name: 算出镜像地址
+        id: image
+        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:latest
+            ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+          cache-from: type=gha # 复用 Actions 缓存，二次构建快很多
+          cache-to: type=gha,mode=max
+
+      # 「构建成功」不等于「能用」—— 真的起一个容器，用 HTTP 把页面拉下来，
+      # 确认返回的就是本项目的 index.html。
+      - name: 冒烟验证
+        run: |
+          set -e
+          docker run -d --name smoke -p 8080:80 \
+            ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/ -o /tmp/page.html; then break; fi
+            sleep 1
+          done
+          test -s /tmp/page.html
+          grep -q "我的日记" /tmp/page.html
+          echo "冒烟通过：容器正常响应，返回的是本项目 index.html"
+          docker rm -f smoke
