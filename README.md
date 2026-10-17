@@ -134,11 +134,7 @@ docker run -d --name diary -p 8080:80 ghcr.io/c33laichi/my-diary-fakewechat:late
 推送到 `main` 后，[`.github/workflows/docker.yml`](.github/workflows/docker.yml) 自动构建并推到 `ghcr.io`，
 构建完还会真的起一个容器、`curl` 把页面拉下来确认是本项目文件，才算过。
 
-一个坑：Docker 镜像名只允许小写，而 GitHub 仓库名允许大写（本仓库就带大写 `W`），
-所以 workflow 里先用 `${GITHUB_REPOSITORY,,}` 转成小写再拼地址。
-
-> 第一次推送成功后，GHCR 上的包默认是 **private**，
-> 需要到仓库右侧「Packages」→ 包设置里改成 **public**，别人才 `docker pull` 得到。
+（镜像名只允许小写，所以 workflow 里先用 `${GITHUB_REPOSITORY,,}` 把仓库名转成小写再拼地址。）
 
 ## 数据与隐私
 
