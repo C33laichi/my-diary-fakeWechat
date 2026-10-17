@@ -346,6 +346,15 @@ input,textarea{font-family:inherit}
 .dialog-btns button:active{background:var(--fill)}
 .dialog-btns .danger{color:var(--danger)}
 .dialog-btns .primary{color:var(--green);font-weight:500}
+/* 弹窗里的输入框（口令输入用）。只有传了 inputs 才显示，其余弹窗不受影响 */
+.dialog-inputs{padding:0 20px 18px;display:flex;flex-direction:column;gap:9px}
+.dialog-inputs input{
+  width:100%;height:42px;padding:0 12px;font-size:15px;
+  border:.5px solid var(--line);border-radius:8px;
+  background:var(--bg);color:var(--text);box-sizing:border-box;
+  -webkit-appearance:none;appearance:none}
+.dialog-inputs input:focus{outline:none;border-color:var(--green)}
+.dialog-inputs .hint{font-size:12px;color:var(--sub);line-height:1.5}
 
 /* ---------------- 图片查看器 ---------------- */
 .viewer{
@@ -1310,6 +1319,7 @@ input,textarea{font-family:inherit}
     <div class="dialog" id="dialog" style="display:none">
       <div class="dialog-title" id="dialogTitle"></div>
       <div class="dialog-text" id="dialogText"></div>
+      <div class="dialog-inputs" id="dialogInputs" style="display:none"></div>
       <div class="dialog-btns" id="dialogBtns"></div>
     </div>
   </div>
@@ -2045,6 +2055,131 @@ var Lock = {
     return this.hash(pin, salt).then(function (h) {
       Meta.save({ pinSalt: salt, pinHash: h, pinEnabled: true });
     });
+  }
+};
+
+/* ==========================================================================
+   5.5 备份加解密层  BackupCrypto
+   可选功能：导出时给备份文件加一道口令加密。
+
+   ★ 为什么需要它：备份文件里是**明文**的日记正文 + 图片 base64。
+     存在自己设备上没事，但一旦"存到网盘 / 发微信 / 发邮件"，
+     等于把最私密的文字明文交给了第三方。加密后文件被谁拿到都只是乱码。
+
+   ★ 为什么外层仍然是 JSON（而不是直接写密文）：
+     ① 任何编辑器、网盘预览打开都是**可读文本**，不会出现"一堆乱码"的观感；
+     ② 导入端 JSON.parse 成功就能取到 encrypted 标记，据此走解密分支；
+     ③ 老版本 App 导出的明文备份没有这个字段，行为完全不变 —— 向后兼容。
+     ⚠️ 历史教训：早期版本给 Filesystem.writeFile 传了非法编码值 'base64'，
+        插件把 base64 字符串原样写盘，结果文件全成乱码、谁都解析不出来。
+        所以：**落盘的字节必须就是最终文本**，别再做 base64 往返。
+
+   ★ 口令 ≠ PIN：PIN 只有 6 位数字（约百万种组合），当加密口令太弱，
+     所以这里要求另设至少 8 位的口令，且不复用 PIN 的哈希。
+   ========================================================================== */
+var BackupCrypto = {
+  ITER: 310000,   // PBKDF2 迭代次数。OWASP 对 PBKDF2-HMAC-SHA256 建议 600k，
+                // 手机端折中到 310k（约 0.3~1 秒，导出是一次性操作，可接受）
+  SALT_BYTES: 16,
+  IV_BYTES: 12,   // AES-GCM 的标准 nonce 长度
+
+  available: function () {
+    return !!(window.crypto && window.crypto.subtle &&
+      window.crypto.getRandomValues && window.TextEncoder);
+  },
+
+  _hex: function (buf) {
+    return Array.prototype.map.call(new Uint8Array(buf), function (b) {
+      return ('0' + b.toString(16)).slice(-2);
+    }).join('');
+  },
+
+  _fromHex: function (hex) {
+    var h = String(hex || ''), out = new Uint8Array(h.length / 2);
+    for (var i = 0; i < out.length; i++) out[i] = parseInt(h.substr(i * 2, 2), 16);
+    return out;
+  },
+
+  /** 口令 → AES-GCM 密钥（不可导出；iterations 从文件里读，便于以后调高标准） */
+  _deriveKey: function (pass, saltBytes, iterations) {
+    var km = new TextEncoder().encode(pass);
+    return window.crypto.subtle.importKey('raw', km, 'PBKDF2', false, ['deriveKey'])
+      .then(function (base) {
+        return window.crypto.subtle.deriveKey(
+          { name: 'PBKDF2', salt: saltBytes, iterations: iterations, hash: 'SHA-256' },
+          base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+      });
+  },
+
+  /**
+   * 明文备份文本 → 加密备份（外层仍是纯 JSON 文本）。
+   * @param {string} plainText 完整明文（含图片）
+   * @param {string} pass 口令
+   * @param {string} baseName 原文件名（用于生成 .dbak）
+   * @returns {Promise<{payload:object, fileName:string}>}
+   */
+  encrypt: function (plainText, pass, baseName) {
+    if (!this.available()) {
+      return Promise.reject(new Error('当前环境不支持加密（需要 Web Crypto）'));
+    }
+    var salt = new Uint8Array(this.SALT_BYTES);
+    var iv = new Uint8Array(this.IV_BYTES);
+    window.crypto.getRandomValues(salt);
+    window.crypto.getRandomValues(iv);   // iv 每次都重新生成，绝不复用
+    var self = this;
+    return this._deriveKey(pass, salt, this.ITER)
+      .then(function (key) {
+        return window.crypto.subtle.encrypt(
+          { name: 'AES-GCM', iv: iv }, key, new TextEncoder().encode(plainText));
+      })
+      .then(function (ct) {
+        return {
+          payload: {
+            app: 'wechat-diary',
+            schema: 1,
+            encrypted: true,
+            alg: 'PBKDF2-SHA256/AES-GCM',
+            iterations: self.ITER,
+            salt: self._hex(salt),
+            iv: self._hex(iv),
+            data: self._hex(ct),
+            exportedAt: new Date().toISOString()
+          },
+          fileName: String(baseName || 'my-diary-backup').replace(/\.(json|txt|md)$/i, '') + '.dbak'
+        };
+      });
+  },
+
+  /** 是不是加密备份（宽容判断：只要有 encrypted 标记就尝试解） */
+  isEncrypted: function (obj) {
+    return !!(obj && obj.encrypted === true && obj.data);
+  },
+
+  /**
+   * 解密 → 明文备份文本。
+   * ⚠️ AES-GCM 的 decrypt 失败**无法区分**"口令错"还是"文件损坏" —— 两者都是
+   *    OperationError。所以这里只负责抛错，具体措辞交给调用方
+   *    （见 importEncryptedBackup：按"口令可能不对"来提示，允许重试）。
+   */
+  decrypt: function (payload, pass) {
+    if (!this.available()) {
+      return Promise.reject(new Error('当前环境不支持解密（需要 Web Crypto）'));
+    }
+    var salt = this._fromHex(payload.salt);
+    var iv = this._fromHex(payload.iv);
+    var ct = this._fromHex(payload.data);
+    var iter = payload.iterations || this.ITER;
+    var km = new TextEncoder().encode(pass);
+    return window.crypto.subtle.importKey('raw', km, 'PBKDF2', false, ['deriveKey'])
+      .then(function (base) {
+        return window.crypto.subtle.deriveKey(
+          { name: 'PBKDF2', salt: salt, iterations: iter, hash: 'SHA-256' },
+          base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+      })
+      .then(function (key) {
+        return window.crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, ct);
+      })
+      .then(function (plain) { return new TextDecoder().decode(plain); });
   }
 };
 
@@ -3611,6 +3746,21 @@ function openDialog(opts) {
     dt.innerHTML = TextFmt.toHtml(opts.text || '');
   }
   dt.style.display = opts.text ? '' : 'none';
+  /*
+   * 可选的口令输入框：只有调用方传了 inputs 才渲染、才显示。
+   * 不传时这里对老弹窗完全是空操作（空字符串 + display:none），行为不变。
+   */
+  var inputs = opts.inputs || [];
+  var ibox = $('#dialogInputs');
+  ibox.innerHTML = inputs.map(function (it) {
+    return '<input type="' + (it.type || 'text') + '"' +
+      (it.placeholder ? ' placeholder="' + escapeHtml(it.placeholder) + '"' : '') +
+      (it.autocomplete ? ' autocomplete="' + it.autocomplete + '"' : '') +
+      (it.value ? ' value="' + escapeHtml(it.value) + '"' : '') + '>';
+  }).join('') +
+    (opts.hint ? '<div class="hint">' + escapeHtml(opts.hint) + '</div>' : '');
+  ibox.style.display = (inputs.length || opts.hint) ? '' : 'none';
+
   var btns = opts.buttons || [{ label: '知道了' }];
   var box = $('#dialogBtns');
   box.innerHTML = btns.map(function (b, i) {
@@ -3622,8 +3772,10 @@ function openDialog(opts) {
     var btn = ev.target.closest('button');
     if (!btn) return;
     var idx = Number(btn.getAttribute('data-i'));
+    // 把输入框的值一并交给 onClick；没传 inputs 时 vals 是空数组，兼容所有旧调用
+    var vals = [].map.call(ibox.querySelectorAll('input'), function (el) { return el.value; });
     closeMask();
-    if (btns[idx] && btns[idx].onClick) btns[idx].onClick();
+    if (btns[idx] && btns[idx].onClick) btns[idx].onClick(vals);
   };
   requestAnimationFrame(function () { $('#mask').classList.add('show'); });
 }
@@ -3908,14 +4060,16 @@ function backupFileName(fmt) {
 
 /* ---------------- 导出格式：JSON / 纯文本 / Markdown ---------------- */
 /**
- * 三种导出格式的选择面板。
+ * 导出格式选择面板（4 项）。
  * 默认（也是推荐）是 JSON —— 它带图片、能原样恢复；
- * txt / md 是给"想拿出去读/存档"用的，所以选项label里先把差别写清楚，
- * 别让用户导完才发现图片没跟着出来。
+ * 第 2 项是同一个 JSON 的**加密版**，给"要存网盘 / 发给自己"的场景用；
+ * txt / md 是给"想拿出去读/存档"用的，只含文字。
+ * 差别直接写在选项 label 里，别让用户导完才发现图片没跟着出来。
  */
 function pickExportFormat() {
   openSheet([
     { label: 'JSON 备份（推荐 · 含图片可恢复）', onClick: function () { confirmExport('json'); } },
+    { label: 'JSON 备份（加密 · 需口令）', onClick: function () { confirmExport('json-enc'); } },
     { label: '纯文本 .txt（仅文字）', onClick: function () { confirmExport('txt'); } },
     { label: 'Markdown .md（仅文字）', onClick: function () { confirmExport('md'); } }
   ]);
@@ -3966,19 +4120,33 @@ function buildTextBackup(entries, fmt) {
   return out.join('\n').replace(/\n+$/, '\n');
 }
 
-function exportBackup() {
+/**
+ * JSON 备份导出。
+ * @param {string} [pass] 传了就加密 —— 适合要存网盘 / 发出去的场景；
+ *                        不传就是原来的明文备份（可直接在任何编辑器里看）。
+ */
+function exportBackup(pass) {
   toast('正在打包…', 1000);
   buildBackup().then(function (payload) {
     // JSON.stringify 会自动把换行写成 \n，缩进 2 便于人工查看。
     // 换行在文件里就是 `\n` 两个字符，任何编辑器打开都能看懂，
     // 不会出现"显示的不是我写的文本"。
-    saveBackupFile(backupFileName('json'), JSON.stringify(payload, null, 2)).then(function () {
-      toast('已导出 ' + payload.entryCount + ' 篇日记');
-    }).catch(function (err) {
-      console.error(err);
-      toast('导出失败：' + ((err && err.message) || '未知原因'), 2600);
+    var plain = JSON.stringify(payload, null, 2);
+    if (!pass) {
+      return saveBackupFile(backupFileName('json'), plain).then(function () {
+        toast('已导出 ' + payload.entryCount + ' 篇日记');
+      });
+    }
+    // 加密分支：PBKDF2 派生动辄几十万次迭代，手机上约 0.3~1 秒，所以先给个提示
+    toast('正在加密…', 1500);
+    return BackupCrypto.encrypt(plain, pass, backupFileName('json')).then(function (res) {
+      return saveBackupFile(res.fileName, JSON.stringify(res.payload, null, 2))
+        .then(function () { toast('已导出加密备份 · ' + payload.entryCount + ' 篇日记'); });
     });
-  }).catch(function () { toast('导出失败'); });
+  }).catch(function (err) {
+    console.error(err);
+    toast('导出失败：' + ((err && err.message) || '未知原因'), 2600);
+  });
 }
 
 /** 纯文本 / Markdown 导出。不走 buildBackup（不需要读图片 base64），所以快得多 */
@@ -4004,7 +4172,8 @@ function exportTextBackup(fmt) {
  * 这里只读一次条目列表来报数，真正的打包（含图片转 base64，可能很慢）留到确认之后。
  */
 function confirmExport(format) {
-  format = (format === 'txt' || format === 'md') ? format : 'json';
+  format = (format === 'txt' || format === 'md' || format === 'json-enc') ? format : 'json';
+  var enc = (format === 'json-enc');
   Store.listEntries().then(function (entries) {
     var n = entries.length;
     var body;
@@ -4013,24 +4182,71 @@ function confirmExport(format) {
     } else if (format === 'json') {
       body = '将导出 <b>' + n + ' 篇日记</b>（最近一篇：' + TimeFmt.full(entries[0].createdAt) + '）。\n' +
         '含图片，可完整恢复。文件保存在本机，不会上传到任何地方。';
+    } else if (enc) {
+      body = '将导出 <b>' + n + ' 篇日记</b>的<b>加密备份</b>。\n' +
+        '内容会被打乱成密文，适合存到网盘或发给自己 —— 别人拿到文件也打不开。';
     } else {
       body = '将把 <b>' + n + ' 篇日记</b>导出成' + (format === 'md' ? 'Markdown' : '纯文本') + '文件。\n' +
         '只含文字、不含图片，适合阅读与存档；要能恢复请改用 JSON 备份。';
     }
-    openDialog({
-      title: '导出备份',
-      html: true,
-      text: body,
-      buttons: [
+    /*
+     * 加密那条路多一步：先确认要导，再单独弹窗收口令。
+     * 拆开是因为口令框要占地方、需要两次输入确认，塞进同一个确认框会又挤又容易误填。
+     */
+    var buttons = enc
+      ? [
+        { label: '取消' },
+        { label: '下一步', style: 'primary', onClick: function () { askBackupPassphrase(n); } }
+      ]
+      : [
         { label: '取消' },
         {
           label: '导出', style: 'primary', onClick: function () {
             if (format === 'json') exportBackup(); else exportTextBackup(format);
+        }
+        }
+      ];
+    openDialog({
+      title: '导出备份',
+      html: true,
+      text: body,
+      hint: enc ? '口令至少 8 位，且不会被保存 —— 忘记就真的恢复不了。' : '',
+      buttons: buttons
+    });
+  }).catch(function () { toast('读取本地数据失败'); });
+}
+
+/**
+ * 收备份口令：两次输入一致、且至少 8 位才放行。
+ * 校验不过时**带着已填内容重新弹一次**，省得用户从头再点一遍菜单。
+ */
+function askBackupPassphrase(entryCount) {
+  function ask(prefill) {
+    openDialog({
+      title: '设置备份口令',
+      html: true,
+      text: entryCount
+        ? '将给 <b>' + entryCount + ' 篇日记</b>的备份加一道口令。'
+        : '将给这份备份加一道口令。',
+      hint: '至少 8 位。口令不会被保存，忘记就无法恢复 —— 请自己记好。',
+      inputs: [
+        { type: 'password', placeholder: '口令（至少 8 位）', autocomplete: 'new-password', value: prefill },
+        { type: 'password', placeholder: '再输入一次', autocomplete: 'new-password' }
+      ],
+      buttons: [
+        { label: '取消' },
+        {
+          label: '导出', style: 'primary', onClick: function (vals) {
+            var pass = vals[0] || '', pass2 = vals[1] || '';
+            if (pass.length < 8) { toast('口令至少 8 位', 2200); ask(pass); return; }
+            if (pass !== pass2) { toast('两次输入的口令不一致', 2200); ask(pass); return; }
+            exportBackup(pass);
           }
         }
       ]
     });
-  }).catch(function () { toast('读取本地数据失败'); });
+  }
+  ask('');
 }
 
 /**
@@ -4075,8 +4291,12 @@ function pickImportFormat() {
 function startImport(fmt) {
   pendingImportFormat = (fmt === 'txt' || fmt === 'md') ? fmt : 'json';
   var el = $('#fileImport');
+  /*
+   * 加密备份的后缀是 .dbak，必须一起列进 accept ——
+   * 否则手机上的文件选择器会把 .dbak 显示成灰色不可点，用户会以为备份丢了的。
+   */
   el.accept = pendingImportFormat === 'json'
-    ? 'application/json,.json'
+    ? 'application/json,.json,.dbak'
     : (pendingImportFormat === 'md' ? 'text/markdown,.md,text/plain' : 'text/plain,.txt');
   el.click();
 }
@@ -4087,6 +4307,15 @@ function importBackup(file, fmt) {
   fr.onload = function () {
     var raw = fr.result;
     var data = parseBackupText(raw);
+    /*
+     * 加密备份：外层仍是 JSON（有 encrypted 标记），但 entries 被整体加密了。
+     * 先收口令、解开，再按普通 JSON 备份接回原流程。
+     * 明文备份不带这个标记，走下面原来的分支，行为完全不变。
+     */
+    if (data && BackupCrypto.isEncrypted(data)) {
+      askImportPassphrase(data);
+      return;
+    }
     // 只要内容真能当备份 JSON 解析，就按 JSON 走 —— 用户可能只是格式选错了，
     // 没必要因为这个把一份好好的备份退回去。
     if (data && data.app === 'wechat-diary' && Array.isArray(data.entries)) {
@@ -4103,6 +4332,48 @@ function importBackup(file, fmt) {
   };
   fr.readAsText(file);
   pendingImportFormat = 'json';    // 用完复位，下次默认还是 JSON
+}
+
+/**
+ * 导入加密备份时收口令。
+ * ⚠️ AES-GCM 解密失败**分不清**"口令错"还是"文件坏"（两者都是 OperationError）。
+ *    所以统一按"口令可能不对"来提示并允许重试 —— 不去断言文件损坏，
+ *    否则用户会以为备份废了，一气之下把唯一一份删掉就真没了。
+ */
+function askImportPassphrase(payload) {
+  function ask() {
+    openDialog({
+      title: '输入备份口令',
+      html: true,
+      text: '这份备份是加密的，请输入当时设置的口令。',
+      hint: '口令不会被保存；忘记的话，这份备份将无法恢复。',
+      inputs: [
+        { type: 'password', placeholder: '备份口令', autocomplete: 'current-password' }
+      ],
+      buttons: [
+        { label: '取消' },
+        {
+          label: '解密并导入', style: 'primary', onClick: function (vals) {
+            var pass = vals[0] || '';
+            if (!pass) { toast('请输入口令', 2000); ask(); return; }
+            toast('正在解密…', 1200);
+            BackupCrypto.decrypt(payload, pass).then(function (plain) {
+              var inner = parseBackupText(plain);
+              if (inner && inner.app === 'wechat-diary' && Array.isArray(inner.entries)) {
+                confirmImport(inner);
+                return;
+              }
+              toast('解密出来的内容不是有效的备份', 2600);
+            }).catch(function () {
+              toast('口令不对，或者文件已损坏', 2600);
+            ask();            // 再给一次机会，而不是直接判死
+            });
+          }
+        }
+      ]
+    });
+  }
+  ask();
 }
 
 function confirmImport(data) {
@@ -5218,6 +5489,7 @@ if (document.readyState === 'loading') {
 /* 供控制台调试 / 自动化测试使用 */
 window.__diary__ = {
   Store: Store, Meta: Meta, State: State, ImageProc: ImageProc, TimeFmt: TimeFmt, TextFmt: TextFmt, Lock: Lock,
+  BackupCrypto: BackupCrypto,
   loadHome: loadHome, switchTab: switchTab, enterApp: enterApp, renderStats: renderStats,
   renderSettings: renderSettings, renderProfile: renderProfile,
   syncTabBack: syncTabBack,

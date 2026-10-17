@@ -65,7 +65,7 @@
   <tr><td nowrap style="white-space:nowrap">统计</td><td>分「概况 / 节奏 / 内容」三段：<b>年度写作热力图</b>（近 53 周 × 7 天，颜色深浅 = 当天字数）、<b>月度字数</b>柱状图、<b>近 6 个月每篇字数走势</b>、<b>写作时段</b>（一天 24 小时 / 一周七天）、<b>句式习惯</b>（每 100 字逗号密度 → 短句流 / 行文平实 / 长句流；明细 8 行，互相能推导的存量项已合并，全部只在本机计算，样本不足时如实显示，不硬下结论）</td></tr>
   <tr><td nowrap style="white-space:nowrap">密码锁</td><td>可选的 6 位 PIN；离开后自动上锁</td></tr>
   <tr><td nowrap style="white-space:nowrap">深色模式</td><td>跟随设置切换，App 内状态栏也会跟着变</td></tr>
-  <tr><td nowrap style="white-space:nowrap">备份</td><td>导出 / 导入 JSON（含图片，可原样恢复）、纯文本、Markdown</td></tr>
+  <tr><td nowrap style="white-space:nowrap">备份</td><td>导出 / 导入 JSON（含图片，可原样恢复）、<b>加密 JSON</b>（<code>.dbak</code>，PBKDF2-SHA256 派生 + AES-GCM，需另设口令）、纯文本、Markdown；手机上导出走<b>系统分享面板</b>，可直接存网盘 / 发给自己</td></tr>
   <tr><td nowrap style="white-space:nowrap">响应式</td><td>手机底部标签栏 → 平板居中单列 → 桌面左侧导航栏；<b>手机横屏单独适配</b></td></tr>
   </tbody>
 </table>
@@ -142,6 +142,9 @@ docker run -d --name diary -p 8080:80 ghcr.io/c33laichi/my-diary-fakewechat:late
 - 日记文字与图片都不会离开设备；「统计」也只在本机计算。
 - 换设备前请先在应用内**导出备份**（JSON 含图片），再到新设备**导入备份**。
 - 忘记 PIN 无法找回（本地哈希存储），只能清空数据重来 —— 所以请定期导出备份。
+- 备份文件默认是**明文**的（正文与图片都在里面）。存在自己设备上没问题，
+  但要传到网盘 / 发给自己，请选「JSON 备份（加密）」并另设一条口令 ——
+  加密后文件被谁拿到都只是乱码。**口令不会被保存，忘了这份备份就再也解不开。**
 
 ## 项目结构
 
@@ -162,11 +165,11 @@ _verify/                # 自动化验证脚本与界面截图
 
 ## 自动化验证
 
-项目里的功能都有对应的浏览器回归脚本，共 **629 项断言**，不需要真机：
+项目里的功能都有对应的浏览器回归脚本，共 **642 项断言**，不需要真机：
 
 ```bash
 cd _verify
-node e2e_diary.mjs           # 389 项：网页版全量回归（需先另开终端 node serve.cjs）
+node e2e_diary.mjs           # 404 项：网页版全量回归（需先另开终端 node serve.cjs）
 node verify_close_pin.mjs    #  89 项：密码锁的关闭 / 修改流程
 node native_shell.mjs        #  36 项：注入假原生桥，验证返回键 / 原生导出 / 状态栏
 node verify_zoom_rotate.mjs  #  36 项：照片缩放 / 横屏适配 / 拍照回退
@@ -185,7 +188,7 @@ node verify_fold.mjs         #  14 项：「更多 / 收起」的折叠判定
 的源文件**逐字节比对**（沙箱里 `unzip` 会报 EBUSY，所以这里手写了解析）。
 
 ```bash
-node _verify/apk_peek.mjs my-diary-v2.4-release.apk
+node _verify/apk_peek.mjs my-diary-v2.5-release.apk
 # MATCH  ✅ APK 内的 index.html 与源文件逐字节一致
 ```
 

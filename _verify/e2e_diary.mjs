@@ -122,6 +122,20 @@ class CDP {
     if (!ok) throw new Error('确认框里找不到按钮「' + label + '」');
     await sleep(320);
   }
+  /**
+   * 按**文案**点底部操作面板（#actionSheet）里的某一项。
+   * 和 clickDialog 同一个道理：面板里插一项（比如导出多一个「加密」选项）
+   * 下标立刻全漂，点到隔壁项上还会一路"假通过"。
+   */
+  async clickSheet(label) {
+    const ok = await this.evalJs(`(() => {
+      const bs = Array.from(document.querySelectorAll('#actionSheet .sheet-item'));
+      const b = bs.find(x => x.textContent.trim() === ${JSON.stringify(label)});
+      if (!b) return false; b.click(); return true; })()`);
+    if (!ok) throw new Error('操作面板里找不到项「' + label + '」，当前有：'
+      + JSON.stringify(await this.evalJs(`Array.from(document.querySelectorAll('#actionSheet .sheet-item')).map(b => b.textContent.trim())`)));
+    await sleep(320);
+  }
   /** 当前弹层里有哪些按钮，用于断言"该有的有、不该有的没有" */
   dialogBtns() {
     return this.evalJs(`Array.from(document.querySelectorAll('#dialogBtns button')).map(b => b.textContent.trim())`);
@@ -842,7 +856,7 @@ try {
   await cdp.clickSel('#timeline .post-more');
   await sleep(500);
   check('更多菜单打开', /编辑这篇日记/.test(await cdp.evalJs(`document.getElementById('actionSheet').textContent`)));
-  await cdp.clickSel('#actionSheet .sheet-item[data-i="0"]');
+  await cdp.clickSheet('编辑这篇日记');
   await sleep(800);
   check('编辑态带入原文与图片',
     (await cdp.evalJs(`document.getElementById('composerText').value`)).length > 10
@@ -897,7 +911,7 @@ try {
     && await cdp.evalJs(`document.getElementById('actionSheet').style.display !== 'none'`),
     await cdp.evalJs(`document.getElementById('actionSheet').textContent.slice(0, 12)`));
   check('松手不会误关面板', await cdp.evalJs(`document.getElementById('mask').classList.contains('show')`));
-  await cdp.clickSel('#actionSheet .sheet-item[data-i="2"]');
+  await cdp.clickSheet('删除');
   await sleep(500);
   check('删除前二次确认', /删除这篇日记/.test(await cdp.evalJs(`document.getElementById('dialog').textContent`)));
   await cdp.clickDialog('删除');
@@ -1459,16 +1473,25 @@ try {
     await cdp.evalJs(`document.getElementById('mask').classList.contains('show')`)
     && await cdp.evalJs(`document.getElementById('actionSheet').style.display !== 'none'`));
   const fmtLabels = await cdp.evalJs(`Array.from(document.querySelectorAll('#actionSheet .sheet-item')).map(b => b.textContent.trim())`);
-  check('格式面板给了 JSON / 纯文本 / Markdown 三个选项（外加取消）',
-    fmtLabels.length === 4 && /JSON/.test(fmtLabels[0]) && /txt/.test(fmtLabels[1]) && /md/.test(fmtLabels[2]),
+  // 按**文案**认项，不认下标：面板里插一项（比如新加的「加密」），下标立刻全漂，
+  // 用例会点到隔壁项上，还可能一路"假通过"。
+  const FMT_JSON = /^JSON 备份（推荐/;
+  const FMT_ENC = /^JSON 备份（加密/;
+  const FMT_TXT = /纯文本 \.txt/;
+  const FMT_MD = /Markdown \.md/;
+  const fmt = (re) => fmtLabels.find((s) => re.test(s)) || '';
+  check('格式面板给了 JSON / 加密 JSON / 纯文本 / Markdown 四个选项（外加取消）',
+    fmtLabels.length === 5 && !!fmt(FMT_JSON) && !!fmt(FMT_ENC) && !!fmt(FMT_TXT) && !!fmt(FMT_MD),
     JSON.stringify(fmtLabels));
-  check('JSON 被标为「推荐」（默认口径对用户可见）', /推荐/.test(fmtLabels[0]));
+  check('JSON 被标为「推荐」（默认口径对用户可见）', /推荐/.test(fmt(FMT_JSON)));
+  check('加密项点明「需口令」（别让人点进去才发现要背一条口令）',
+    /加密/.test(fmt(FMT_ENC)) && /口令/.test(fmt(FMT_ENC)));
   check('纯文本 / Markdown 明确标注「仅文字」（导完才发现没图片最坑）',
-    /仅文字/.test(fmtLabels[1]) && /仅文字/.test(fmtLabels[2]));
+    /仅文字/.test(fmt(FMT_TXT)) && /仅文字/.test(fmt(FMT_MD)));
   check('格式面板阶段尚未产生任何下载', dlCount() === 0);
   await cdp.shot('17f-export-format-sheet.png');
   // 选 JSON：仍然要走二次确认
-  await cdp.clickSel('#actionSheet .sheet-item[data-i="0"]');
+  await cdp.clickSheet(fmt(FMT_JSON));
   await sleep(700);
   check('选 JSON 后弹二次确认框',
     await cdp.evalJs(`document.getElementById('mask').classList.contains('show')`)
@@ -1487,7 +1510,7 @@ try {
   // 选纯文本：确认框要说清"不含图片、要恢复请用 JSON"
   await cdp.clickSel('#deskTiles .tile[data-go="backup"]');
   await sleep(600);
-  await cdp.clickSel('#actionSheet .sheet-item[data-i="1"]');
+  await cdp.clickSheet(fmt(FMT_TXT));
   await sleep(700);
   const txtConfirm = await cdp.evalJs(`document.getElementById('dialogText').textContent`);
   check('选纯文本时确认框说明「不含图片」', /不含图片/.test(txtConfirm), txtConfirm.replace(/\n/g, ' '));
@@ -1495,6 +1518,74 @@ try {
   await cdp.clickSel('#dialogBtns button:not(.primary)');
   await sleep(700);
   check('取消文本导出也不落文件', dlCount() === 0);
+
+  console.log('\n[17g] 加密备份：外层仍是可读 JSON、口令往返、错口令不崩');
+  check('当前环境支持 Web Crypto（加密功能可用）',
+    await cdp.evalJs(`window.__diary__.BackupCrypto.available()`) === true);
+  // 造一篇带"只有本人才写得出来"的标记文本，用来验证它不会明文出现在文件里
+  await cdp.evalJs(`window.__diary__.publishText('加密备份用例：ZQX-7713 这串标记绝不能明文出现在文件里。')`);
+  await sleep(1300);
+  const encRound = await cdp.evalJs(`(async () => {
+    const plain = JSON.stringify(await window.__diary__.buildBackup(), null, 2);
+    const r1 = await window.__diary__.BackupCrypto.encrypt(plain, 'diary-pass-2026', 'my-diary-backup-20261017-1200.json');
+    const r2 = await window.__diary__.BackupCrypto.encrypt(plain, 'diary-pass-2026', 'my-diary-backup-20261017-1200.json');
+    const back = await window.__diary__.BackupCrypto.decrypt(r1.payload, 'diary-pass-2026');
+    let wrongErr = '';
+    try { await window.__diary__.BackupCrypto.decrypt(r1.payload, 'wrong-pass'); }
+    catch (e) { wrongErr = (e && e.name) ? e.name : 'Error'; }
+    return {
+      fileName: r1.fileName,
+      keys: Object.keys(r1.payload).sort().join(','),
+      encrypted: r1.payload.encrypted, alg: r1.payload.alg, iterations: r1.payload.iterations,
+      saltLen: (r1.payload.salt || '').length, ivLen: (r1.payload.iv || '').length,
+      textInPlain: plain.indexOf('ZQX-7713') >= 0,
+      textLeaked: JSON.stringify(r1.payload).indexOf('ZQX-7713') >= 0,
+      roundTrip: back === plain,
+      saltFresh: r1.payload.salt !== r2.payload.salt,
+      ivFresh: r1.payload.iv !== r2.payload.iv,
+      wrongErr: wrongErr
+    }; })()`);
+  check('前提：明文备份里确实有这段标记（否则"没泄露"是假通过）', encRound.textInPlain === true);
+  check('加密后文件名后缀是 .dbak', /\.dbak$/.test(encRound.fileName), encRound.fileName);
+  check('外层仍是纯 JSON：app / schema / encrypted / alg / iterations / salt / iv / data 齐全',
+    encRound.keys === 'alg,app,data,encrypted,exportedAt,iterations,iv,salt,schema', encRound.keys);
+  check('带 encrypted 标记 + 算法名 + 迭代次数（导入端据此走解密分支）',
+    encRound.encrypted === true && /AES-GCM/.test(encRound.alg) && encRound.iterations >= 100000,
+    `${encRound.alg} / ${encRound.iterations}`);
+  check('salt 16 字节、iv 12 字节（十六进制字符长度各 32 / 24）',
+    encRound.saltLen === 32 && encRound.ivLen === 24, `salt=${encRound.saltLen} iv=${encRound.ivLen}`);
+  check('日记正文不出现在加密文件里（传到网盘上也只是乱码）', encRound.textLeaked === false);
+  check('正确口令能解回**逐字相同**的明文备份', encRound.roundTrip === true);
+  check('每次加密都重新生成 salt / iv（同一口令两次导出内容不同）',
+    encRound.saltFresh && encRound.ivFresh);
+  check('错口令解密会失败且不崩（由上层提示"口令不对或文件损坏"并允许重试）',
+    !!encRound.wrongErr, encRound.wrongErr);
+  // 导入端：加密备份应当先弹**口令输入框**，而不是直接开导
+  const encImport = await cdp.evalJs(`(() => new Promise(res => {
+    const payload = { app:'wechat-diary', schema:1, encrypted:true, alg:'PBKDF2-SHA256/AES-GCM',
+      iterations:1000, salt:'00112233445566778899aabbccddeeff', iv:'00112233445566778899aabb', data:'aabbcc' };
+    const f = new File([JSON.stringify(payload)], 'backup.dbak', { type:'application/json' });
+    window.__diary__.importBackup(f, 'json');
+    setTimeout(() => res({
+      title: document.getElementById('dialogTitle').textContent.trim(),
+      inputs: document.querySelectorAll('#dialogInputs input').length,
+      hint: (document.querySelector('#dialogInputs .hint') || {}).textContent || ''
+    }), 700); }))()`);
+  check('导入加密备份先要口令（不直接开导）', encImport.inputs === 1,
+    `标题「${encImport.title}」/ 输入框 ${encImport.inputs} 个`);
+  check('口令框有提醒"忘了就找不回来"', /找不回|无法恢复|记牢/.test(encImport.hint), encImport.hint);
+  await cdp.shot('17g-encrypted-import.png');
+  await cdp.evalJs(`window.__diary__.closeMask()`);
+  await sleep(400);
+  check('明文老备份不会被误判成加密（向后兼容）',
+    await cdp.evalJs(`window.__diary__.BackupCrypto.isEncrypted({ app:'wechat-diary', entries: [] })`) === false);
+  check('加密这一串操作同样没落任何文件', dlCount() === 0);
+  // 收尾：删掉本篇，保持后续用例的基线
+  await cdp.evalJs(`window.__diary__.Store.listEntries().then(list => {
+    const e = list.find(x => (x.text || '').indexOf('ZQX-7713') >= 0);
+    return e ? window.__diary__.Store.deleteEntryCascade(e.id) : null;
+  }).then(() => window.__diary__.loadHome())`);
+  await sleep(1200);
 
   console.log('\n[17h] 纯文本 / Markdown 导出：内容、文件名、能被自己读回来');
   // [17d] 收尾把那篇删了，这里重新造一篇换行明确的（含空行）来断言"逐字一致"

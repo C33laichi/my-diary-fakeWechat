@@ -243,6 +243,10 @@ Android 13+ 走 MediaStore 不需要声明。iOS 侧则在 `Info.plist` 里声�
 **为什么导出备份要改**：`<a download>` + `blob:` URL 在 Android WebView 里**完全不生效**，
 原来点"导出备份"在手机上会静默没反应。
 
+**加密备份不依赖任何原生插件**：用的是浏览器自带的 Web Crypto（`PBKDF2-SHA256` 派生 256 位密钥
++ `AES-GCM`），网页版和 App 里跑的是同一份代码。所以 `.dbak` 在哪一端导出、都能在哪一端解开 ——
+前提是记得口令（口令不写进文件、也不存本地）。
+
 ---
 
 ## 五、品牌资源（已替换掉 Capacitor 默认 logo）
