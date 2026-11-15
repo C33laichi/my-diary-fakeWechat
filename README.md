@@ -59,7 +59,7 @@
   <tr><td nowrap style="white-space:nowrap">年月筛选</td><td>时间线与相册顶部可<b>先选年、再选月</b>，只列出有记录的年月；两个页面各记一份筛选</td></tr>
   <tr><td nowrap style="white-space:nowrap">发日记</td><td>最多 9 张配图，图片自动压缩（最长边 1600px、JPEG 质量 0.82）后入库</td></tr>
   <tr><td nowrap style="white-space:nowrap">拍照</td><td>App 内可直接调用相机，照片<b>同时写入手机系统相册</b></td></tr>
-  <tr><td nowrap style="white-space:nowrap">看大图</td><td>双指捏合 / 滚轮 / 双击缩放，放大后可拖动平移；多图可左右滑动翻页</td></tr>
+  <tr><td nowrap style="white-space:nowrap">看大图</td><td>双指捏合 / 滚轮 / 双击缩放；不仅能放大（至 6x），还能<b>缩小到 0.25x</b> 看长图全景，倍数实时显示；放大后可拖动平移，多图可左右滑动翻页</td></tr>
   <tr><td nowrap style="white-space:nowrap">相册</td><td>全部图片按月份汇总</td></tr>
   <tr><td nowrap style="white-space:nowrap">搜索</td><td>按文字内容搜索日记</td></tr>
   <tr><td nowrap style="white-space:nowrap">统计</td><td>分「概况 / 节奏 / 内容」三段：<b>年度写作热力图</b>（近 53 周 × 7 天，颜色深浅 = 当天字数）、<b>月度字数</b>柱状图、<b>近 6 个月每篇字数走势</b>、<b>写作时段</b>（一天 24 小时 / 一周七天）、<b>句式习惯</b>（每 100 字逗号密度 → 短句流 / 行文平实 / 长句流；明细 8 行，互相能推导的存量项已合并，全部只在本机计算，样本不足时如实显示，不硬下结论）</td></tr>
@@ -165,14 +165,14 @@ _verify/                # 自动化验证脚本与界面截图
 
 ## 自动化验证
 
-项目里的功能都有对应的浏览器回归脚本，共 **642 项断言**，不需要真机：
+项目里的功能都有对应的浏览器回归脚本，共 **651 项断言**，不需要真机：
 
 ```bash
 cd _verify
 node e2e_diary.mjs           # 404 项：网页版全量回归（需先另开终端 node serve.cjs）
 node verify_close_pin.mjs    #  89 项：密码锁的关闭 / 修改流程
 node native_shell.mjs        #  36 项：注入假原生桥，验证返回键 / 原生导出 / 状态栏
-node verify_zoom_rotate.mjs  #  36 项：照片缩放 / 横屏适配 / 拍照回退
+node verify_zoom_rotate.mjs  #  45 项：照片缩放（含缩小到 0.25x）/ 横屏适配 / 拍照回退
 node file_boot.mjs           #  25 项：file:// 双击 + 存储降级
 node verify_camera.mjs       #  20 项：拍照入草稿（注入假原生桥，跑真机才走的分支）
 node verify_swipe.mjs        #  18 项：多图查看器的连续翻页（真实触摸事件）

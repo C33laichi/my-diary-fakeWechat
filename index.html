@@ -3708,7 +3708,8 @@ function moveViewer(i, instant) {
 }
 function viewerZoomText() {
   var z = State.viewerZoom;
-  return (z && z > 1.01) ? ('  ·  ' + z.toFixed(1) + 'x') : '';
+  // 放大显示倍数；缩小（<1）也显示——不然用户缩到 0.4x 会以为图"变小是错觉"
+  return (z && (z > 1.01 || z < 0.99)) ? ('  ·  ' + z.toFixed(1) + 'x') : '';
 }
 function updateViewerCount() {
   $('#viewerCount').textContent = (State.viewerIndex + 1) + '/' + State.viewerList.length + viewerZoomText();
@@ -5060,9 +5061,11 @@ function bindEvents() {
        · 未放大 → 单指左右拖动翻页（和改之前完全一样的手感）
        · 已放大 → 单指拖动平移图片，图片拖到头了才允许翻页
      缩放本身支持：双指捏合（触摸）、滚轮（桌面）、双击（触摸与鼠标通用）。
+     缩小也是一等公民：可以缩到 0.25x 看长图全景（捏合/滚轮均可，下限 ZOOM_MIN）。
      touch-action:none 写在 .viewer-track 上，否则浏览器会把双指手势抢去滚页面。 */
   var vTrack = $('#viewerTrack');
   var ZOOM_MAX = 6;                 // 最大放大倍数，再大就糊成马赛克了
+  var ZOOM_MIN = 0.25;               // 最小缩小倍数（看长图全景用）；1x 是"适配屏幕"基准
   var V_TAP = 10, V_TOGGLE = 2.5;   // 判定「点」而非「拖」的位移阈值 / 双击放大到的倍数
   var vScale = 1, vTx = 0, vTy = 0; // 当前缩放与平移
   var vPanning = false;             // 已放大时，本次手势是在拖图片
@@ -5112,7 +5115,9 @@ function bindEvents() {
   function vRender(anim) {
     var im = vImg();
     if (!im) return;
-    if (vScale <= 1.001) { vScale = 1; vTx = 0; vTy = 0; }   // 归位：不留"差一点点"的放大态
+    // 归位：只收拾"差一点点"的浮点误差态（放大侧松手的吸附在 touchend 里做）。
+    // 不能像以前那样写 vScale <= 1.001 —— 缩小（<1）现在是合法状态，那样会把缩小态全吞掉。
+    if (Math.abs(vScale - 1) < 0.002) { vScale = 1; vTx = 0; vTy = 0; }
     im.style.transition = anim ? 'transform .22s cubic-bezier(.3,.7,0,1)' : 'none';
     im.style.transform = vScale === 1 ? ''
       : 'translate(' + vTx.toFixed(1) + 'px,' + vTy.toFixed(1) + 'px) scale(' + vScale.toFixed(4) + ')';
@@ -5163,7 +5168,7 @@ function bindEvents() {
     if (vPinch && ev.touches.length >= 2) {
       var d = Math.hypot(ev.touches[0].clientX - ev.touches[1].clientX,
                          ev.touches[0].clientY - ev.touches[1].clientY);
-      vScale = Math.min(ZOOM_MAX, Math.max(1, vPinchScale * d / vPinch));
+      vScale = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, vPinchScale * d / vPinch));
       // 以两指中点为焦点缩放：焦点不动 → 焦点之外的距离按缩放比同比放大
       var mx = (ev.touches[0].clientX + ev.touches[1].clientX) / 2;
       var my = (ev.touches[0].clientY + ev.touches[1].clientY) / 2;
@@ -5192,7 +5197,8 @@ function bindEvents() {
     if (vPinch) {
       if (ev.touches.length < 2) {
         vPinch = null;
-        if (vScale <= 1.02) { vScale = 1; vTx = 0; vTy = 0; vRender(true); }
+        // 捏到 [0.9, 1.02] 之间松手 → 吸回 1（顺滑归位，防手抖）；捏得更小（<0.9）→ 保留缩小态
+        if (vScale <= 1.02 && vScale >= 0.9) { vScale = 1; vTx = 0; vTy = 0; vRender(true); }
       }
       return;
     }
@@ -5223,7 +5229,7 @@ function bindEvents() {
     var r = im.getBoundingClientRect();
     vLastX = r.left + r.width / 2; vLastY = r.top + r.height / 2;
     var k = ev.deltaY < 0 ? 1.15 : 1 / 1.15;
-    var next = Math.min(ZOOM_MAX, Math.max(1, vScale * k));
+    var next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, vScale * k));
     vApplyScale(next / vScale);
     vScale = next;
     vClamp(); vRender(false);

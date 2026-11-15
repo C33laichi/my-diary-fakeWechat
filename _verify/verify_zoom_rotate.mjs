@@ -212,6 +212,60 @@ try {
   check('pinch zooms in', s2 > 1.5, `scale=${s2.toFixed(3)}`);
   await shot('v3-viewer-pinch.png');
 
+  // 2c-bis 缩小（2026-11-15 新能力）：滚轮能缩到 <1，下限钉在 ZOOM_MIN，计数同步显示
+  await ev(`window.__diary__.State.viewerReset && window.__diary__.State.viewerReset()`);
+  await sleep(200);
+  for (let i = 0; i < 10; i++) {   // 10 次 ÷1.15 ≈ 0.247，越过 0.9 的吸附带并触到下限（0.25^x 需 ln4/ln1.15≈10 次）
+    await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: vc.x, y: vc.y, deltaX: 0, deltaY: 120, modifiers: 0 });
+    await sleep(60);
+  }
+  await sleep(300);
+  const sMin = scaleOf(await imgTf());
+  check('wheel-down zooms out below 1x', sMin < 0.9, `scale=${sMin.toFixed(3)}`);
+  check('zoom-out has a floor at 0.25x (no vanishing image)', Math.abs(sMin - 0.25) < 0.02, `scale=${sMin.toFixed(3)}`);
+  const cntMin = await ev(`document.getElementById('viewerCount').textContent`);
+  check('counter shows sub-1x factor (0.2x)', /0\.\d+x$/.test(cntMin), cntMin);
+  check('shrunken state reports in State too', (await ev(`window.__diary__.State.viewerZoom`)) < 0.9);
+  check('shrunken image is not "zoomed" (single-finger drag still flips pages)',
+    (await ev(`document.querySelector('#viewerTrack .slide img').classList.contains('zoomed')`)) === false);
+  await shot('v3b-viewer-shrunk.png');
+  // 捏合缩小（vPinch 分支的 <1 路径）+ 松手不吞缩小态（touchend 吸附带只在 [0.9,1.02]）
+  await ev(`window.__diary__.State.viewerReset && window.__diary__.State.viewerReset()`);
+  await sleep(200);
+  await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: vc.x - 80, y: vc.y }, { x: vc.x + 80, y: vc.y }] });
+  await send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: vc.x - 30, y: vc.y }, { x: vc.x + 30, y: vc.y }] });
+  await send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: vc.x - 12, y: vc.y }, { x: vc.x + 12, y: vc.y }] });
+  await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await sleep(400);
+  const sPinchOut = scaleOf(await imgTf());
+  check('pinch-out shrinks below 1x and survives touchend', sPinchOut < 0.9, `scale=${sPinchOut.toFixed(3)}`);
+  check('pinch-out also floors at 0.25x', Math.abs(sPinchOut - 0.25) < 0.03, `scale=${sPinchOut.toFixed(3)}`);
+  // 双击：缩小态一步放大到 2.5x
+  const dbl2 = async (pt) => {
+    for (let i = 0; i < 2; i++) {
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pt.x, y: pt.y, button: 'left', clickCount: i + 1, buttons: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pt.x, y: pt.y, button: 'left', clickCount: i + 1, buttons: 0 });
+      await sleep(60);
+    }
+  };
+  await dbl2(vc);
+  await sleep(500);
+  const sTog = scaleOf(await imgTf());
+  check('double-click from shrunken state jumps to 2.5x in one tap-pair', sTog > 1.5, `scale=${sTog.toFixed(3)}`);
+  // 滚轮回程：缩小后再放大单调回升
+  await ev(`window.__diary__.State.viewerReset && window.__diary__.State.viewerReset()`);
+  await sleep(200);
+  for (let i = 0; i < 6; i++) {
+    await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: vc.x, y: vc.y, deltaX: 0, deltaY: 120, modifiers: 0 });
+    await sleep(60);
+  }
+  await sleep(200);
+  const sDownA = scaleOf(await imgTf());
+  await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: vc.x, y: vc.y, deltaX: 0, deltaY: -120, modifiers: 0 });
+  await sleep(300);
+  const sBack = scaleOf(await imgTf());
+  check('wheel-up from shrunken state zooms back monotonically', sBack > sDownA, `${sDownA.toFixed(3)} -> ${sBack.toFixed(3)}`);
+
   // 2d regression: zoom by pinch, close the viewer, reopen it.
   // The zoom state lives in the bindEvents closure, so before the fix it survived the
   // close: the DOM looked 1x but vScale was still 4.02, and the first double-click was
