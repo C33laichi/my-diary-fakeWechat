@@ -2,7 +2,12 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<!-- viewport-fit=cover 2026-11-15 移除：安卓 15/16 强制 edge-to-edge 后，Capacitor SystemBars
+     只要看到 cover 就收回原生留白、把 safe-area 交给 CSS env() —— 而 WebView 对
+     env(safe-area-inset-*) 的传值是坏的（chromium 40699457/457682720），全解析成 0，
+     整个 App 顶进状态栏。去掉 cover 后 SystemBars 走原生 decorView padding 兜底，
+     键盘也由它接管（等效旧的 adjustResize）。网页版与桌面浏览器不受影响。 -->
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#EDEDED">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
