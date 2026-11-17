@@ -158,6 +158,7 @@ mobile/                 # Capacitor 移动端外壳（Android / iOS）
   tools/preflight.mjs   # 打包前置静态体检
   android/  ios/        # 原生工程
 _verify/                # 自动化验证脚本与界面截图
+docs/screenshots/       # README 效果图（由 _verify/docs_shots.mjs 生成，别手工替换）
 ```
 
 **注意**：`index.html` 是唯一源文件。`mobile/www/index.html` 与原生工程里的
@@ -165,11 +166,11 @@ _verify/                # 自动化验证脚本与界面截图
 
 ## 自动化验证
 
-项目里的功能都有对应的浏览器回归脚本，共 **651 项断言**，不需要真机：
+项目里的功能都有对应的浏览器回归脚本，共 **667 项断言**，不需要真机：
 
 ```bash
 cd _verify
-node e2e_diary.mjs           # 404 项：网页版全量回归（需先另开终端 node serve.cjs）
+node e2e_diary.mjs           # 420 项：网页版全量回归（需先另开终端 node serve.cjs）
 node verify_close_pin.mjs    #  89 项：密码锁的关闭 / 修改流程
 node native_shell.mjs        #  36 项：注入假原生桥，验证返回键 / 原生导出 / 状态栏
 node verify_zoom_rotate.mjs  #  45 项：照片缩放（含缩小到 0.25x）/ 横屏适配 / 拍照回退
@@ -177,7 +178,11 @@ node file_boot.mjs           #  25 项：file:// 双击 + 存储降级
 node verify_camera.mjs       #  20 项：拍照入草稿（注入假原生桥，跑真机才走的分支）
 node verify_swipe.mjs        #  18 项：多图查看器的连续翻页（真实触摸事件）
 node verify_fold.mjs         #  14 项：「更多 / 收起」的折叠判定
+node docs_shots.mjs          # 非断言：重新生成 README 里的效果图（docs/screenshots）
 ```
+
+`docs_shots.mjs` 会写入 40 多篇示例日记（跨半年、带渐变占位照片），再按各个屏幕状态
+逐张截图 —— README 顶部那排效果图就是它出的，改了界面重跑一遍即可，不用再手工截。
 
 这些脚本积累了几个**真实踩过的坑**，都写在了注释里（`overflow:hidden` 会让被平移的
 轮播子树失去命中测试、`addImages` 曾不返回 Promise、折叠判定曾把逻辑行当视觉行……）。
