@@ -56,7 +56,7 @@
   <thead><tr><th align="left">功能</th><th align="left">说明</th></tr></thead>
   <tbody>
   <tr><td nowrap style="white-space:nowrap">时间线</td><td>朋友圈式信息流；正文超过 6 行折叠，点「更多」展开（行数按<b>真实视觉行数</b>计算）</td></tr>
-  <tr><td nowrap style="white-space:nowrap">年月筛选</td><td>时间线与相册顶部可<b>先选年、再选月</b>，只列出有记录的年月；两个页面各记一份筛选</td></tr>
+  <tr><td nowrap style="white-space:nowrap">年月日筛选</td><td>时间线与相册顶部可<b>逐级下钻：年 → 月 → 日</b>，只列出有记录的日期；没有分支的层级自动省略（只有一年就不摆年份行、某年只有一个月就直接给日期），两个页面各记一份筛选</td></tr>
   <tr><td nowrap style="white-space:nowrap">发日记</td><td>最多 9 张配图，图片自动压缩（最长边 1600px、JPEG 质量 0.82）后入库</td></tr>
   <tr><td nowrap style="white-space:nowrap">拍照</td><td>App 内可直接调用相机，照片<b>同时写入手机系统相册</b></td></tr>
   <tr><td nowrap style="white-space:nowrap">看大图</td><td>双指捏合 / 滚轮 / 双击缩放；不仅能放大（至 6x），还能<b>缩小到 0.25x</b> 看长图全景，倍数实时显示；放大后可拖动平移，多图可左右滑动翻页</td></tr>

@@ -1903,16 +1903,19 @@ try {
   await cdp.shot('16c-stats-geometry.png');
 
   /**
-   * [18c] 时间线 / 相册的年月筛选。
+   * [18c] 时间线 / 相册的时间筛选：年 → 月 → 日 三级下钻。
    * 注入跨年月的数据（不落库，和 [18b] 一样只改内存里的 State.entries），
-   * 因为前面的用例都只有 1 篇日记，撑不出"选年份 / 选月份"这两个层级。
+   * 因为前面的用例都只有 1 篇日记，撑不出"选年份 / 选月份 / 选日期"三层。
    *
-   * 两个容易做错的点：
-   *  ① 只跨一个月份时不该出现筛选条 —— 筛了也只有那一个选项，纯噪音。
-   *  ② 相册只按**有图片的月份**建索引（某月写了日记但没配图，相册里就不该有它），
+   * 几个容易做错的点：
+   *  ① 所有记录都在同一天时不该出现筛选条 —— 没有可筛的分支，是纯噪音；
+   *     但同一个月里的不同日期**有**分支，这时直接给日期行（不摆那行"全年 / 9月"）。
+   *  ② 日期行可能来自"隐含月份"（该年只有一个月）。选日时必须把月份补齐，
+   *     否则 {y,m:null,d:20} 会匹配到全年任何一个 20 号。
+   *  ③ 相册只按**有图片的日期**建索引（某月写了日记但没配图，相册里就不该有它），
    *     所以两个页面必须各自持有筛选状态，不能共用。
    */
-  console.log('\n[18c] 时间线 / 相册：按年月筛选');
+  console.log('\n[18c] 时间线 / 相册：按年月日筛选');
   await cdp.viewport(390, 844, true);
   await sleep(400);
   // ⚠️ [18b] 结束时停在统计页 —— 它是盖在标签页之上的一个独立 screen，
@@ -1926,17 +1929,69 @@ try {
   await cdp.evalJs(`window.__diary__.switchTab('timeline')`);
   await sleep(500);
   await cdp.evalJs(`(() => { const s = document.querySelector('#screen-timeline .scroll'); if (s) s.scrollTop = 0; return true; })()`);
-  // ① 只有同一个月：出现筛选条是纯噪音
-  const only1 = await cdp.evalJs(`(() => {
-    const mk = (y, m, d, i) => ({ id: 'one-' + i, text: '同一月的第 ' + i + ' 篇', images: [],
-      createdAt: new Date(y, m - 1, d, 10, 0, 0).getTime(), updatedAt: 0 });
-    window.__diary__.State.entries = [mk(2026, 9, 20, 1), mk(2026, 9, 5, 2)];
-    window.__diary__.State.tlFilter = { y: null, m: null };
+
+  // ① 所有记录都在同一天：没有可筛的分支，整条不出现
+  const sameDay = await cdp.evalJs(`(() => {
+    const mk = (i) => ({ id: 'sd-' + i, text: '同一天的记录 ' + i, images: [],
+      createdAt: new Date(2026, 8, 20, 10 + i, 0, 0).getTime(), updatedAt: 0 });
+    window.__diary__.State.entries = [mk(1), mk(2)];
+    window.__diary__.State.tlFilter = { y: null, m: null, d: null };
     window.__diary__.renderTimeline();
     return document.getElementById('tlTimebar').hidden; })()`);
-  check('只跨一个月份时不显示筛选条（避免无意义的一行）', only1 === true, `hidden=${only1}`);
+  check('所有记录都在同一天时不显示筛选条（没有可筛的分支）', sameDay === true, `hidden=${sameDay}`);
 
-  // ② 造跨 2 年 3 个月的数据：2026-10(1篇有图) / 2026-09(3篇，2篇有图) / 2025-11(2篇无图)
+  // ② 同一个月、不同日期：跳过年份/月份行，直接给日期行
+  const oneMonth = await cdp.evalJs(`(() => {
+    const mk = (d, i) => ({ id: 'om-' + i, text: '同一月的第 ' + i + ' 篇', images: [],
+      createdAt: new Date(2026, 8, d, 10, 0, 0).getTime(), updatedAt: 0 });
+    window.__diary__.State.entries = [mk(20, 1), mk(5, 2)];
+    window.__diary__.State.tlFilter = { y: null, m: null, d: null };
+    window.__diary__.renderTimeline();
+    const rows = [...document.querySelectorAll('#tlTimebar .tb-row')];
+    return { hidden: document.getElementById('tlTimebar').hidden, rows: rows.length,
+             chips: rows[0] ? [...rows[0].querySelectorAll('.tb-chip')].map(b => b.textContent.trim()) : [] }; })()`);
+  check('单月多天：不摆年/月行，直接给出该月有记录的日期',
+    oneMonth.hidden === false && oneMonth.rows === 1 &&
+      oneMonth.chips.join(' | ') === '全月 | 5日 · 1篇 | 20日 · 1篇',
+    `${oneMonth.rows} 行 / ${oneMonth.chips.join(' | ')}`);
+
+  await cdp.clickSel('#tlTimebar .tb-chip[data-tb="d"][data-v="20"]');
+  await sleep(400);
+  const d20 = await cdp.evalJs(`(() => ({ posts: document.querySelectorAll('#timeline .post').length,
+    stat: document.getElementById('meStat').textContent }))()`);
+  check('选到某一天只剩那一天的 1 篇', d20.posts === 1, `${d20.posts} 篇`);
+  check('日期筛选交代范围与总数（2026年9月20日 · 1 篇 / 共 2 篇）',
+    /2026年9月20日 · 1 篇 \/ 共 2 篇/.test(d20.stat), d20.stat);
+
+  const dReset = await cdp.evalJs(`(() => {
+    document.querySelector('#tlTimebar .tb-chip[data-tb="d"][data-v=""]').click();
+    return { posts: document.querySelectorAll('#timeline .post').length,
+             filter: JSON.stringify(window.__diary__.State.tlFilter) }; })()`);
+  check('点「全月」回到整月，且不残留看不见的年份筛选',
+    dReset.posts === 2 && dReset.filter === '{"y":null,"m":null,"d":null}',
+    `${dReset.posts} 篇 / ${dReset.filter}`);
+
+  // ③ 筛选指向的日期被删掉后要自动降级，不能停在"空的一天"上
+  const stale = await cdp.evalJs(`(() => {
+    const mk = (d, i) => ({ id: 'st-' + i, text: '待删 ' + i, images: [],
+      createdAt: new Date(2026, 8, d, 10, 0, 0).getTime(), updatedAt: 0 });
+    const gone = mk(20, 1);
+    window.__diary__.State.entries = [gone, mk(5, 2)];
+    window.__diary__.State.tlFilter = { y: 2026, m: 9, d: 20 };
+    window.__diary__.renderTimeline();
+    // 模拟"删掉 20 日那篇"后重绘（删除走的就是 loadHome -> renderTimeline）
+    window.__diary__.State.entries = window.__diary__.State.entries.filter(x => x.id !== gone.id);
+    window.__diary__.renderTimeline();
+    return { filter: JSON.stringify(window.__diary__.State.tlFilter),
+             posts: document.querySelectorAll('#timeline .post').length,
+             stat: document.getElementById('meStat').textContent,
+             hidden: document.getElementById('tlTimebar').hidden }; })()`);
+  check('筛选的日期被删掉后自动降级（只剩一天时连筛选一起清空）',
+    stale.filter === '{"y":null,"m":null,"d":null}' && stale.posts === 1 &&
+      stale.hidden === true && !/2026年/.test(stale.stat),
+    `${stale.filter} / ${stale.posts} 篇 / ${stale.stat}`);
+
+  // ④ 造跨 2 年 3 个月的数据：2026-10(1篇有图) / 2026-09(3篇，2篇有图) / 2025-11(2篇无图)
   // 从库里（而不是内存）取一张真图 id：内存里的 entries 已被上面的用例换成假的，
   // 而 window 上的临时变量也可能被中途的页面重载冲掉 —— 只有 Store 里的才是稳的
   await cdp.evalJs(`(() => {
@@ -1961,8 +2016,8 @@ try {
       mk(2025, 11, 8, 1),
       mk(2025, 11, 2, 2)
     ];
-    window.__diary__.State.tlFilter = { y: null, m: null };
-    window.__diary__.State.galFilter = { y: null, m: null };
+    window.__diary__.State.tlFilter = { y: null, m: null, d: null };
+    window.__diary__.State.galFilter = { y: null, m: null, d: null };
     window.__diary__.renderTimeline();
     return { pid: pid,
              rows: document.querySelectorAll('#tlTimebar .tb-row').length,
@@ -1975,7 +2030,7 @@ try {
   check('未选年份时先不铺月份（不然一行塞 12 个月）', seed.rows === 1, `${seed.rows} 行`);
   check('筛选条本身不改变列表（默认仍是全部 6 篇）', seed.posts === 6, `${seed.posts} 篇`);
 
-  await cdp.clickSel('#tlTimebar .tb-chip[data-v="2026"]');
+  await cdp.clickSel('#tlTimebar .tb-chip[data-tb="y"][data-v="2026"]');
   await sleep(400);
   const y26 = await cdp.evalJs(`(() => {
     const rows = [...document.querySelectorAll('#tlTimebar .tb-row')];
@@ -1989,8 +2044,9 @@ try {
     y26.months.join(' | '));
   check('选中 2026 年后只剩该年 4 篇', y26.posts === 4, `${y26.posts} 篇`);
   check('筛选时交代清楚范围与总数', /2026年 · 4 篇 \/ 共 6 篇/.test(y26.stat), y26.stat);
+  check('未选月份时先不铺日期', y26.rows === 2, `${y26.rows} 行`);
 
-  await cdp.clickSel('#tlTimebar .tb-chip[data-v="9"]');
+  await cdp.clickSel('#tlTimebar .tb-chip[data-tb="m"][data-v="9"]');
   await sleep(400);
   const m9f = await cdp.evalJs(`(() => ({ posts: document.querySelectorAll('#timeline .post').length,
     stat: document.getElementById('meStat').textContent }))()`);
@@ -1998,12 +2054,41 @@ try {
   check('月份筛选也交代总数（2026年9月 · 3 篇 / 共 6 篇）',
     /2026年9月 · 3 篇 \/ 共 6 篇/.test(m9f.stat), m9f.stat);
 
-  await cdp.clickSel('#tlTimebar .tb-chip[data-v=""]');
+  const dayRow = await cdp.evalJs(`(() => {
+    const rows = [...document.querySelectorAll('#tlTimebar .tb-row')];
+    return { rows: rows.length,
+             days: rows[2] ? [...rows[2].querySelectorAll('.tb-chip')].map(b => b.textContent.trim()) : [] }; })()`);
+  check('选中月份后展开该月**有记录**的日期（全月 + 5/12/20 日）',
+    dayRow.rows === 3 && dayRow.days[0] === '全月' &&
+      /^5日 · 1篇$/.test(dayRow.days[1]) && /^12日 · 1篇$/.test(dayRow.days[2]) && /^20日 · 1篇$/.test(dayRow.days[3]),
+    dayRow.days.join(' | '));
+
+  await cdp.clickSel('#tlTimebar .tb-chip[data-tb="d"][data-v="12"]');
+  await sleep(400);
+  const tlD12 = await cdp.evalJs(`(() => ({ posts: document.querySelectorAll('#timeline .post').length,
+    stat: document.getElementById('meStat').textContent,
+    rows: document.querySelectorAll('#tlTimebar .tb-row').length }))()`);
+  check('选中 12 日后只剩 1 篇', tlD12.posts === 1, `${tlD12.posts} 篇`);
+  check('日筛选时年份/月份行仍在（可逐级退回）',
+    tlD12.rows === 3 && /2026年9月12日 · 1 篇 \/ 共 6 篇/.test(tlD12.stat), `${tlD12.rows} 行 / ${tlD12.stat}`);
+  await cdp.shot('14a-timeline-dayfilter.png');
+
+  await cdp.clickSel('#tlTimebar .tb-chip[data-tb="d"][data-v=""]');
+  await sleep(350);
+  check('点「全月」回到 9 月的 3 篇',
+    await cdp.evalJs(`document.querySelectorAll('#timeline .post').length`) === 3);
+
+  await cdp.clickSel('#tlTimebar .tb-chip[data-tb="m"][data-v=""]');
+  await sleep(350);
+  check('点「全年」回到 2026 年的 4 篇',
+    await cdp.evalJs(`document.querySelectorAll('#timeline .post').length`) === 4);
+
+  await cdp.clickSel('#tlTimebar .tb-chip[data-tb="y"][data-v=""]');
   await sleep(400);
   check('点「全部」回到 6 篇',
     await cdp.evalJs(`document.querySelectorAll('#timeline .post').length`) === 6);
 
-  // ③ 相册：只对有图片的月份建索引，且状态与时间线彼此独立
+  // ⑤ 相册：只对有图片的日期建索引，且状态与时间线彼此独立
   await cdp.evalJs(`window.__diary__.switchTab('gallery')`);
   await sleep(650);
   const galBar = await cdp.evalJs(`(() => ({
@@ -2016,7 +2101,7 @@ try {
       galBar.chips[0] === '全年' && /^9月 · 2张$/.test(galBar.chips[1]) && /^10月 · 1张$/.test(galBar.chips[2]),
     `${galBar.months} 组 / ${galBar.chips.join(' | ')} / pid=${pid ? '有' : '空'}`);
 
-  await cdp.clickSel('#galTimebar .tb-chip[data-v="9"]');
+  await cdp.clickSel('#galTimebar .tb-chip[data-tb="m"][data-v="9"]');
   await sleep(450);
   const gal9 = await cdp.evalJs(`(() => ({
     months: document.querySelectorAll('.gal-month').length,
@@ -2025,8 +2110,36 @@ try {
   check('相册筛到 9 月只剩该月一组', gal9.months === 1, `${gal9.months} 组`);
   check('相册范围标注带总数', /2026年9月 · 2 张 \/ 共 3 张/.test(gal9.head), gal9.head);
   check('相册与时间线各持一份筛选（互不串台）',
-    gal9.tlFilter === '{"y":null,"m":null}', gal9.tlFilter);
+    gal9.tlFilter === '{"y":null,"m":null,"d":null}', gal9.tlFilter);
+
+  const galDays = await cdp.evalJs(`(() => {
+    const rows = [...document.querySelectorAll('#galTimebar .tb-row')];
+    return { rows: rows.length,
+             days: rows[1] ? [...rows[1].querySelectorAll('.tb-chip')].map(b => b.textContent.trim()) : [] }; })()`);
+  check('相册选中月份后也给出该月有图片的日期（全月 + 12/20 日）',
+    galDays.rows === 2 && galDays.days[0] === '全月' &&
+      /^12日 · 1张$/.test(galDays.days[1]) && /^20日 · 1张$/.test(galDays.days[2]),
+    galDays.days.join(' | '));
+
+  await cdp.clickSel('#galTimebar .tb-chip[data-tb="d"][data-v="20"]');
+  await sleep(450);
+  const galD20 = await cdp.evalJs(`(() => ({
+    months: document.querySelectorAll('.gal-month').length,
+    imgs: document.querySelectorAll('.gal-grid img').length,
+    head: (document.querySelector('.pane-head') || {}).textContent || '',
+    list: window.__diary__.State.galleryList.length }))()`);
+  check('相册筛到某一天只剩那张图',
+    galD20.months === 1 && galD20.imgs === 1 && galD20.list === 1,
+    `${galD20.months} 组 / ${galD20.imgs} 张 / 序列 ${galD20.list}`);
+  check('相册日期范围标注带总数（2026年9月20日 · 1 张 / 共 3 张）',
+    /2026年9月20日 · 1 张 \/ 共 3 张/.test(galD20.head), galD20.head);
+  check('查看器序列只含这一天（翻页不会翻到别的日期）', galD20.list === 1, `序列 ${galD20.list}`);
   await cdp.shot('14b-gallery-timefilter.png');
+
+  await cdp.clickSel('#galTimebar .tb-chip[data-tb="d"][data-v=""]');
+  await sleep(350);
+  check('相册点「全月」回到 9 月的 2 张',
+    await cdp.evalJs(`document.querySelectorAll('.gal-grid img').length`) === 2);
 
   console.log('\n[19] 控制台异常');
   const errs = cdp.pageErrors();
