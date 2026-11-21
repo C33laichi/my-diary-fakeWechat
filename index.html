@@ -312,6 +312,34 @@ input,textarea{font-family:inherit}
 .counter.warn{color:var(--danger)}
 .composer-tip{font-size:12.5px;color:var(--sub);line-height:1.7;margin-top:20px;padding-top:14px;border-top:.5px solid var(--line)}
 
+/* ---------------- 语音：录制按钮 / 草稿 / 时间线语音条 ---------------- */
+.audio-block{margin-top:14px}
+.audio-add{
+  display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px dashed var(--line);
+  border-radius:8px;background:transparent;color:var(--sub);font-size:13px;width:100%;
+}
+.audio-add:active{background:var(--fill)}
+.audio-add.recording{border-color:var(--danger);color:var(--danger);background:rgba(192,57,43,.06)}
+.audio-add .rec-dot{width:9px;height:9px;border-radius:50%;background:var(--danger);flex:none}
+.audio-add.recording .rec-dot{animation:recPulse 1s infinite}
+@keyframes recPulse{0%,100%{opacity:1}50%{opacity:.25}}
+.audio-row{
+  display:flex;align-items:center;gap:10px;padding:9px 10px;margin-top:8px;
+  background:var(--fill);border-radius:8px;
+}
+.audio-play{
+  width:30px;height:30px;border-radius:50%;flex:none;display:flex;align-items:center;
+  justify-content:center;background:var(--green);color:#fff;border:none;font-size:12px;
+}
+.audio-play:active{opacity:.75}
+.audio-bar{flex:1;height:4px;border-radius:2px;background:var(--line);position:relative;overflow:hidden;cursor:pointer}
+.audio-bar i{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--green);border-radius:2px}
+.audio-meta{font-size:11.5px;color:var(--sub);flex:none;min-width:52px;text-align:right}
+.audio-del{width:22px;height:22px;flex:none;color:var(--sub);font-size:17px;line-height:1;border:none;background:transparent}
+.audio-del:active{opacity:.6}
+.audio-note{font-size:11.5px;color:var(--sub);margin-top:8px;line-height:1.6}
+.post-audio{margin-top:8px}
+
 /* ---------------- 通用：底部操作面板 ---------------- */
 .mask{
   position:fixed;inset:0;background:var(--mask);z-index:120;opacity:0;pointer-events:none;
@@ -361,6 +389,16 @@ input,textarea{font-family:inherit}
   -webkit-appearance:none;appearance:none}
 .dialog-inputs input:focus{outline:none;border-color:var(--green)}
 .dialog-inputs .hint{font-size:12px;color:var(--sub);line-height:1.5}
+/* checkbox 不能套用上面 42px 全宽输入框的样式，单独一条 */
+.dialog-inputs .dialog-check{
+  display:flex;align-items:flex-start;gap:9px;font-size:12.5px;
+  color:var(--text);line-height:1.55;cursor:pointer;
+}
+.dialog-inputs .dialog-check input{
+  width:16px;height:16px;flex:none;margin:2px 0 0;
+  -webkit-appearance:checkbox;appearance:checkbox;accent-color:var(--green);
+}
+.dialog-inputs .dialog-check input:focus{outline:none}
 
 /* ---------------- 图片查看器 ---------------- */
 .viewer{
@@ -1109,6 +1147,14 @@ input,textarea{font-family:inherit}
     <div class="composer-body">
       <textarea id="composerText" placeholder="这一刻的想法…" maxlength="2000" rows="1"></textarea>
       <div class="cgrid" id="composerGrid"></div>
+      <div class="audio-block">
+        <button class="audio-add" id="btnRecord" type="button">
+          <span class="rec-dot" style="background:var(--green)"></span>
+          <span id="btnRecordLabel">添加语音</span>
+        </button>
+        <div id="composerAudios"></div>
+        <div class="audio-note" id="audioNote">语音只保存在本机；最多 3 段，每段最长 5 分钟。</div>
+      </div>
       <div class="counter" id="composerCounter">0/2000</div>
       <div class="composer-tip" id="composerTip"></div>
     </div>
@@ -1709,14 +1755,16 @@ var ImageProc = {
 
 /* ==========================================================================
    3. 存储层  Store
-   设计：IndexedDB 为唯一数据源（entries / images 两个对象仓库），
+   设计：IndexedDB 为唯一数据源（entries / images / audio 三个对象仓库），
         若 IndexedDB 不可用（如部分浏览器的 file:// 策略、隐私模式）自动降级到
-        localStorage（图片转 dataURL，容量受限，界面上会给出提示）。
+        localStorage（图片/语音转 dataURL，容量受限，界面上会给出提示）。
    对外暴露统一的异步 API，上层不感知后端差异。
+   ⚠️ 语音单独一个仓库而不是塞进 images：相册、统计、备份的 _imageData、
+      估算占用都直接遍历 images，混进去会被当成图片渲染出来（漏一个过滤点就穿帮）。
    ========================================================================== */
 var Store = (function () {
   var DB_NAME = 'wechat-diary';
-  var DB_VER = 1;
+  var DB_VER = 2;
   var LS_PREFIX = 'wd_';
   var backend = null;
   var mode = 'idb';          // 'idb' | 'local'
@@ -1737,6 +1785,11 @@ var Store = (function () {
         if (!db.objectStoreNames.contains('images')) {
           var is = db.createObjectStore('images', { keyPath: 'id' });
           is.createIndex('entryId', 'entryId', { unique: false });
+        }
+        // DB_VER 2：语音独立仓库。升级老库时也会走到这里，已有数据原样保留。
+        if (!db.objectStoreNames.contains('audio')) {
+          var as = db.createObjectStore('audio', { keyPath: 'id' });
+          as.createIndex('entryId', 'entryId', { unique: false });
         }
       };
       req.onsuccess = function () { resolve(req.result); };
@@ -1793,13 +1846,32 @@ var Store = (function () {
       var t = this.db.transaction('images', 'readonly');
       return reqP(t.objectStore('images').getAll());
     },
-    /** 只清空日记及其图片，保留封面 / 头像等个人资料图 */
+    getAudio: function (id) {
+      var t = this.db.transaction('audio', 'readonly');
+      return reqP(t.objectStore('audio').get(id));
+    },
+    putAudio: function (rec) {
+      var t = this.db.transaction('audio', 'readwrite');
+      t.objectStore('audio').put(rec);
+      return txDone(t);
+    },
+    deleteAudio: function (id) {
+      var t = this.db.transaction('audio', 'readwrite');
+      t.objectStore('audio').delete(id);
+      return txDone(t);
+    },
+    listAudios: function () {
+      var t = this.db.transaction('audio', 'readonly');
+      return reqP(t.objectStore('audio').getAll());
+    },
+    /** 只清空日记及其图片/语音，保留封面 / 头像等个人资料图 */
     clear: function () {
       var db = this.db;
       return reqP(db.transaction('images', 'readonly').objectStore('images').getAll()).then(function (imgs) {
-        var t = db.transaction(['entries', 'images'], 'readwrite');
+        var t = db.transaction(['entries', 'images', 'audio'], 'readwrite');
         var ents = t.objectStore('entries');
         var imgs2 = t.objectStore('images');
+        t.objectStore('audio').clear();
         return new Promise(function (resolve, reject) {
           t.oncomplete = function () { resolve(); };
           t.onerror = function () { reject(t.error); };
@@ -1870,6 +1942,39 @@ var Store = (function () {
       });
       return Promise.resolve(out);
     },
+    /* 语音：同样转 dataURL；localStorage 只有几 MB，界面会提示容量受限 */
+    getAudio: function (id) {
+      var rec = lsGet('aud_' + id, null);
+      if (!rec) return Promise.resolve(null);
+      rec.blob = ImageProc.dataURLToBlob(rec.data);
+      return Promise.resolve(rec);
+    },
+    putAudio: function (rec) {
+      return ImageProc.blobToDataURL(rec.blob).then(function (dataUrl) {
+        var ok = lsSet('aud_' + rec.id, {
+          id: rec.id, entryId: rec.entryId, duration: rec.duration,
+          size: rec.size, mime: rec.mime, data: dataUrl
+        });
+        return ok ? undefined : Promise.reject(new Error('quota'));
+      });
+    },
+    deleteAudio: function (id) {
+      try { localStorage.removeItem(LS_PREFIX + 'aud_' + id); } catch (e) {}
+      return Promise.resolve();
+    },
+    listAudios: function () {
+      var out = [], keys = [];
+      try {
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (k && k.indexOf(LS_PREFIX + 'aud_') === 0) keys.push(k);
+        }
+      } catch (e) {}
+      keys.forEach(function (k) {
+        try { out.push(JSON.parse(localStorage.getItem(k))); } catch (e) {}
+      });
+      return Promise.resolve(out);
+    },
     clear: function () {
       var keys = [];
       try {
@@ -1877,7 +1982,7 @@ var Store = (function () {
           var k = localStorage.key(i);
           if (!k) continue;
           var isProfile = (k === LS_PREFIX + 'img_cover' || k === LS_PREFIX + 'img_avatar');
-          if (!isProfile && (k.indexOf(LS_PREFIX + 'img_') === 0 || k === LS_PREFIX + 'entries')) keys.push(k);
+          if (!isProfile && (k.indexOf(LS_PREFIX + 'img_') === 0 || k.indexOf(LS_PREFIX + 'aud_') === 0 || k === LS_PREFIX + 'entries')) keys.push(k);
         }
       } catch (e) {}
       keys.forEach(function (k) { try { localStorage.removeItem(k); } catch (e) {} });
@@ -1900,7 +2005,7 @@ var Store = (function () {
           mode = 'local';
         }).catch(function () {
           // 最后兜底：纯内存（本次会话有效，刷新即丢）
-          var mem = { entries: [], images: {} };
+          var mem = { entries: [], images: {}, audios: {} };
           backend = {
             init: function () { return Promise.resolve(); },
             listEntries: function () { return Promise.resolve(mem.entries.slice()); },
@@ -1917,7 +2022,11 @@ var Store = (function () {
             putImage: function (r) { mem.images[r.id] = r; return Promise.resolve(); },
             deleteImage: function (id) { delete mem.images[id]; return Promise.resolve(); },
             listImages: function () { return Promise.resolve(Object.keys(mem.images).map(function (k) { return mem.images[k]; })); },
-            clear: function () { mem.entries = []; mem.images = {}; return Promise.resolve(); }
+            getAudio: function (id) { return Promise.resolve(mem.audios[id] || null); },
+            putAudio: function (r) { mem.audios[r.id] = r; return Promise.resolve(); },
+            deleteAudio: function (id) { delete mem.audios[id]; return Promise.resolve(); },
+            listAudios: function () { return Promise.resolve(Object.keys(mem.audios).map(function (k) { return mem.audios[k]; })); },
+            clear: function () { mem.entries = []; mem.images = {}; mem.audios = {}; return Promise.resolve(); }
           };
           mode = 'memory';
         });
@@ -1936,17 +2045,21 @@ var Store = (function () {
       });
     },
     saveEntry: function (entry) { return backend.putEntry(entry); },
-    /** 删除日记：先级联删除它拥有的图片，再删除条目本身 */
+    /** 删除日记：级联删除它拥有的图片与语音，再删除条目本身 */
     deleteEntryCascade: function (id) {
-      return backend.listImages().then(function (imgs) {
-        var owned = (imgs || []).filter(function (r) { return r.entryId === id; });
-        return Promise.all(owned.map(function (r) {
+      return Promise.all([backend.listImages(), backend.listAudios()]).then(function (res) {
+        var imgs = (res[0] || []).filter(function (r) { return r.entryId === id; });
+        var auds = (res[1] || []).filter(function (r) { return r.entryId === id; });
+        var release = function (r) {
           if (urlCache.has(r.id)) {
             try { URL.revokeObjectURL(urlCache.get(r.id)); } catch (e) {}
             urlCache.delete(r.id);
           }
-          return backend.deleteImage(r.id);
-        }));
+        };
+        return Promise.all(
+          imgs.map(function (r) { release(r); return backend.deleteImage(r.id); })
+            .concat(auds.map(function (r) { release(r); return backend.deleteAudio(r.id); }))
+        );
       }).then(function () { return backend.deleteEntry(id); });
     },
 
@@ -1964,6 +2077,18 @@ var Store = (function () {
     listImages: function () { return backend.listImages(); },
     clearAll: function () { return backend.clear(); },
 
+    /* ---------- 语音 ---------- */
+    putAudio: function (rec) { return backend.putAudio(rec); },
+    getAudio: function (id) { return backend.getAudio(id); },
+    deleteAudio: function (id) {
+      if (urlCache.has(id)) {
+        try { URL.revokeObjectURL(urlCache.get(id)); } catch (e) {}
+        urlCache.delete(id);
+      }
+      return backend.deleteAudio(id);
+    },
+    listAudios: function () { return backend.listAudios(); },
+
     /* ---------- 估算占用 ---------- */
     /**
      * 图片字节 + 日记文字字节。
@@ -1972,14 +2097,14 @@ var Store = (function () {
      * 所以"清空全部日记"之后这里的数字通常不会变成 0，而是回落到只剩资料图的大小。
      */
     usage: function () {
-      return Promise.all([backend.listImages(), backend.listEntries()]).then(function (res) {
+      return Promise.all([backend.listImages(), backend.listAudios(), backend.listEntries()]).then(function (res) {
         var bytes = 0;
-        (res[0] || []).forEach(function (r) {
+        [].concat(res[0] || [], res[1] || []).forEach(function (r) {
           if (r.size) bytes += r.size;
           else if (r.data) bytes += r.data.length * 0.75;
           else if (r.blob) bytes += r.blob.size || 0;
         });
-        (res[1] || []).forEach(function (e) {
+        (res[2] || []).forEach(function (e) {
           try { bytes += JSON.stringify(e).length; } catch (err) { /* 循环引用等异常不影响进度 */ }
         });
         return bytes;
@@ -2190,6 +2315,150 @@ var BackupCrypto = {
 };
 
 /* ==========================================================================
+   5.6 语音录制层  VoiceRecorder
+   用浏览器 / WebView 自带的 MediaRecorder，零依赖、网页版与 App 同一份代码。
+
+   ★ 时长必须自己记：webm/opus 的 <audio>.duration 在很多浏览器里是 Infinity
+     （流式容器没写总时长元数据），指望它显示「0:12」或算进度会直接得到 NaN。
+     所以录制结束把毫秒数写进 Store 的 duration 字段，UI 一律用这个值。
+   ★ mime 也要自己记：Chrome/Android 录出 webm，Safari/iOS 录出 mp4，
+     备份跨系统导入时可能放不出来（已知限制，导出勾选框里如实提示）。
+   ========================================================================== */
+var VoiceRecorder = {
+  MAX_MS: 5 * 60 * 1000,
+  MAX_PER_ENTRY: 3,
+  recording: false,
+  _mr: null, _stream: null, _chunks: [], _t0: 0, _timer: null, _mime: '', _discard: false,
+  _pending: false,    // getUserMedia 还没回来时防重复点击
+
+  available: function () {
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia &&
+      window.MediaRecorder && window.Blob);
+  },
+
+  mime: function () {
+    var list = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+    for (var i = 0; i < list.length; i++) {
+      try {
+        if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(list[i])) return list[i];
+      } catch (e) {}
+    }
+    return '';   // 交给浏览器自己决定
+  },
+
+  /** @returns Promise<boolean> 是否真的开始录了 */
+  start: function (onTick, onStop, onError) {
+    if (this.recording || this._pending) return Promise.resolve(false);
+    this._pending = true;
+    if (!this.available()) {
+      this._pending = false;
+      onError && onError('当前环境不支持录音，请用 App 或 HTTPS 打开');
+      return Promise.resolve(false);
+    }
+    var self = this, mime = this.mime();
+    return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      self._pending = false;
+      self._stream = stream; self._chunks = []; self._mime = mime; self._discard = false;
+      var mr;
+      try { mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined); }
+      catch (e) { mr = new MediaRecorder(stream); }
+      self._mr = mr;
+      mr.ondataavailable = function (ev) { if (ev.data && ev.data.size) self._chunks.push(ev.data); };
+      mr.onstop = function () {
+        self.recording = false;
+        clearInterval(self._timer); self._timer = null;
+        try { self._stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+        self._stream = null;
+        var ms = Date.now() - self._t0;
+        var blob = new Blob(self._chunks, { type: self._mime || 'audio/webm' });
+        self._chunks = [];
+        if (!self._discard && blob.size) onStop && onStop(blob, self._mime || blob.type, ms);
+        self._mr = null;
+      };
+      mr.onerror = function () { onError && onError('录音中断，请重试'); };
+      mr.start(1000);   // 每秒切一片，长录音不至于全压在最后一个 chunk
+      self.recording = true; self._t0 = Date.now();
+      onTick && onTick(0);
+      self._timer = setInterval(function () {
+        var ms = Date.now() - self._t0;
+        onTick && onTick(ms);
+        if (ms >= self.MAX_MS) self.stop();
+      }, 200);
+      return true;
+    }).catch(function (err) {
+      self._pending = false;
+      var denied = err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError' ||
+        err.name === 'SecurityError');
+      onError && onError(denied ? '没有麦克风权限，请在系统设置里允许' : '打不开麦克风，请检查设备');
+      return false;
+    });
+  },
+
+  stop: function () {
+    if (this._mr && this.recording) { try { this._mr.stop(); } catch (e) {} }
+  },
+
+  /** 放弃本次录音：停掉MediaStream但不产出草稿 */
+  cancel: function () {
+    if (!this.recording) return;
+    this._discard = true;
+    this.stop();
+  }
+};
+
+/** 秒 → m:ss */
+function fmtVoiceTime(ms) {
+  var s = Math.max(0, Math.round((ms || 0) / 1000));
+  return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
+}
+
+/* 当前只有一个 Audio 在播（换一段自动停上一段），URL 复用 urlCache 统一释放 */
+var voiceEl = null, voicePlayingId = null;
+function voiceUrl(id, blob) {
+  if (urlCache.has(id)) return urlCache.get(id);
+  var u = URL.createObjectURL(blob);
+  urlCache.set(id, u);
+  return u;
+}
+function stopVoice() {
+  if (voiceEl) { try { voiceEl.pause(); } catch (e) {} voiceEl = null; }
+  if (voicePlayingId) {
+    var bar = document.querySelector('.audio-row[data-voice-row="' + voicePlayingId + '"] .audio-bar i');
+    if (bar) bar.style.width = '0%';
+    var btn = document.querySelector('.audio-row[data-voice-row="' + voicePlayingId + '"] .audio-play');
+    if (btn) btn.textContent = '▶';
+    voicePlayingId = null;
+  }
+}
+/** 找到这段语音的 Blob：草稿优先，其次已入库的 */
+function getVoiceBlob(id) {
+  var d = (State.draftAudios || []).filter(function (a) { return a.id === id; })[0];
+  if (d) return Promise.resolve({ blob: d.blob, duration: d.duration });
+  return Store.getAudio(id).then(function (r) {
+    return r && r.blob ? { blob: r.blob, duration: r.duration } : null;
+  });
+}
+/** 播放/暂停；total 用我们自己记的时长，不碰 <audio>.duration */
+function toggleVoice(id) {
+  if (voicePlayingId === id) { stopVoice(); return; }
+  stopVoice();
+  getVoiceBlob(id).then(function (hit) {
+    if (!hit) { toast('这段语音已丢失', 2000); return; }
+    var el = new Audio(voiceUrl(id, hit.blob));
+    voiceEl = el; voicePlayingId = id;
+    var row = document.querySelector('.audio-row[data-voice-row="' + id + '"]');
+    var bar = row ? row.querySelector('.audio-bar i') : null;
+    var btn = row ? row.querySelector('.audio-play') : null;
+    if (btn) btn.textContent = '❚❚';
+    el.onended = function () { stopVoice(); };
+    el.ontimeupdate = function () {
+      if (bar) bar.style.width = Math.min(100, el.currentTime * 1000 / Math.max(1, hit.duration) * 100) + '%';
+    };
+    el.play().catch(function () { toast('播放失败，可能是格式不被支持', 2200); stopVoice(); });
+  });
+}
+
+/* ==========================================================================
    6. 应用状态与视图层
    ========================================================================== */
 /* 图片 Blob URL 缓存：避免重复读库、避免重复创建 */
@@ -2241,6 +2510,7 @@ var State = {
   tabVia: 'tab',
   editingId: null,
   draftImages: [],      // [{id, blob, w, h, url}]
+  draftAudios: [],      // [{id, blob, mime, duration(ms), size}]
   textOnly: false,      // 本次发布只写文字（长按时间线相机进来的），不显示配图入口
   viewerList: [],
   viewerIndex: 0,
@@ -2656,6 +2926,7 @@ function renderTimeline() {
       html += '<div class="year-divider">' + lastYear + '年</div>';
     }
     var imgs = e.images || [];
+    var auds = e.audios || [];
     var gridHtml = '';
     if (imgs.length) {
       gridHtml = '<div class="' + gridClass(imgs.length) + '">' + imgs.map(function (iid, i) {
@@ -2664,6 +2935,17 @@ function renderTimeline() {
         return '<a class="ph" href="javascript:;" data-view="' + e.id + '" data-index="' + i + '"' +
           (single ? ' style="aspect-ratio:' + ratio + '"' : '') + '>' +
           '<img data-img="' + iid + '" alt=""></a>';
+      }).join('') + '</div>';
+    }
+    // 语音：时长异步从 Store 读（entry 里只存 id），渲染完由 hydrateAudios 回填
+    var audioHtml = '';
+    if (auds.length) {
+      audioHtml = '<div class="post-audio">' + auds.map(function (aid) {
+        return '<div class="audio-row" data-voice-row="' + aid + '">' +
+          '<button class="audio-play" data-audio-play="' + aid + '" type="button" aria-label="播放">▶</button>' +
+          '<div class="audio-bar" data-audio-seek="' + aid + '"><i></i></div>' +
+          '<span class="audio-meta" data-voice-time="' + aid + '">…</span>' +
+          '</div>';
       }).join('') + '</div>';
     }
 
@@ -2684,6 +2966,7 @@ function renderTimeline() {
           '<div class="post-name">' + escapeHtml(Meta.data.nickname || '我') + '</div>' +
           textHtml +
           gridHtml +
+          audioHtml +
           '<div class="post-foot">' +
             '<span class="post-time" title="' + TimeFmt.full(e.createdAt) + '">' +
               TimeFmt.rel(e.createdAt) + (e.updatedAt ? '（已编辑）' : '') + '</span>' +
@@ -2700,7 +2983,16 @@ function renderTimeline() {
   wrap.innerHTML = html + '<div class="tl-end">—— 已经到底了 ——</div>';
   hydrateImages(wrap);
   hydrateAvatars(wrap);
+  hydrateAudios(wrap);
   syncPostFold(wrap);
+}
+/** 回填语音条时长：entry 里只存 id，时长在 audio 仓库里 */
+function hydrateAudios(wrap) {
+  (wrap || document).querySelectorAll('[data-voice-time]').forEach(function (el) {
+    Store.getAudio(el.getAttribute('data-voice-time')).then(function (r) {
+      if (r) el.textContent = fmtVoiceTime(r.duration);
+    }).catch(function () {});
+  });
 }
 
 /**
@@ -3852,6 +4144,12 @@ function openDialog(opts) {
   var inputs = opts.inputs || [];
   var ibox = $('#dialogInputs');
   ibox.innerHTML = inputs.map(function (it) {
+    // checkbox 要带一行说明文字，且回传的是 checked 而不是 value
+    if (it.type === 'checkbox') {
+      return '<label class="dialog-check"><input type="checkbox"' +
+        (it.checked ? ' checked' : '') + '>' +
+        '<span>' + escapeHtml(it.label || '') + '</span></label>';
+    }
     return '<input type="' + (it.type || 'text') + '"' +
       (it.placeholder ? ' placeholder="' + escapeHtml(it.placeholder) + '"' : '') +
       (it.autocomplete ? ' autocomplete="' + it.autocomplete + '"' : '') +
@@ -3871,8 +4169,11 @@ function openDialog(opts) {
     var btn = ev.target.closest('button');
     if (!btn) return;
     var idx = Number(btn.getAttribute('data-i'));
-    // 把输入框的值一并交给 onClick；没传 inputs 时 vals 是空数组，兼容所有旧调用
-    var vals = [].map.call(ibox.querySelectorAll('input'), function (el) { return el.value; });
+    // 把输入框的值一并交给 onClick；checkbox 回传 checked，password/text 回传 value。
+    // 没传 inputs 时 vals 是空数组，兼容所有旧调用。
+    var vals = [].map.call(ibox.querySelectorAll('input'), function (el) {
+      return el.type === 'checkbox' ? el.checked : el.value;
+    });
     closeMask();
     if (btns[idx] && btns[idx].onClick) btns[idx].onClick(vals);
   };
@@ -3921,7 +4222,21 @@ function openComposer(entry, opts) {
       State.draftImages = arr.filter(Boolean);
     });
   }
-  job.then(function () {
+  // 编辑时把已有语音一并带回草稿，否则保存一次就会把语音丢掉
+  var audioJob = Promise.resolve();
+  if (entry && entry.audios && entry.audios.length) {
+    audioJob = Promise.all(entry.audios.map(function (aid) {
+      return Store.getAudio(aid).then(function (rec) {
+        return (rec && rec.blob) ? {
+          id: aid, blob: rec.blob, mime: rec.mime || '',
+          duration: rec.duration || 0, size: rec.size || rec.blob.size || 0
+        } : null;
+      });
+    })).then(function (arr) { State.draftAudios = arr.filter(Boolean); });
+  } else {
+    State.draftAudios = [];
+  }
+  Promise.all([job, audioJob]).then(function () {
     renderComposerGrid();
     showScreen('#screen-composer');
     setTimeout(function () { if (!entry) $('#composerText').focus(); }, 320);
@@ -3929,14 +4244,18 @@ function openComposer(entry, opts) {
 }
 function renderComposerGrid() {
   var grid = $('#composerGrid');
+  var ab = document.querySelector('.audio-block');
+  if (ab) ab.style.display = State.textOnly ? 'none' : '';
   // 纯文字模式：整个配图区收起来，连「+」都不给，想配图重新点一次相机就行
   if (State.textOnly) {
     grid.innerHTML = '';
     grid.style.display = 'none';
+    if (ab) ab.style.display = 'none';
     updatePublishState();
     return;
   }
   grid.style.display = '';
+  renderComposerAudios();
   var imgs = State.draftImages;
   var html = imgs.map(function (it, i) {
     return '<div class="cell"><img src="' + it.url + '" alt="">' +
@@ -3952,9 +4271,35 @@ function renderComposerGrid() {
   grid.innerHTML = html;
   updatePublishState();
 }
+/** 语音草稿区：一行一段，可试听、可删；录制中按钮变成红色「停止」 */
+function renderComposerAudios() {
+  var box = $('#composerAudios');
+  if (!box) return;
+  var list = State.draftAudios || [];
+  box.innerHTML = list.map(function (a) {
+    return '<div class="audio-row" data-voice-row="' + a.id + '">' +
+      '<button class="audio-play" data-audio-play="' + a.id + '" type="button" aria-label="播放">▶</button>' +
+      '<div class="audio-bar" data-audio-seek="' + a.id + '"><i></i></div>' +
+      '<span class="audio-meta">' + fmtVoiceTime(a.duration) + '</span>' +
+      '<button class="audio-del" data-audio-del="' + a.id + '" type="button" aria-label="删除">×</button>' +
+      '</div>';
+  }).join('');
+  var btn = $('#btnRecord'), label = $('#btnRecordLabel');
+  if (btn) {
+    var rec = VoiceRecorder.recording;
+    btn.classList.toggle('recording', rec);
+    btn.disabled = !rec && list.length >= VoiceRecorder.MAX_PER_ENTRY;
+    if (label) label.textContent = rec ? '正在录音…点此停止'
+      : (list.length >= VoiceRecorder.MAX_PER_ENTRY ? '已达 3 段上限' : '添加语音');
+  }
+  var note = $('#audioNote');
+  if (note) note.textContent = (Store.mode !== 'idb')
+    ? '当前是降级存储（容量约几 MB），长语音可能保存失败；建议用 App 或支持 IndexedDB 的浏览器。'
+    : '语音只保存在本机；最多 3 段，每段最长 5 分钟。';
+}
 function updatePublishState() {
   var hasText = $('#composerText').value.trim().length > 0;
-  $('#btnPublish').disabled = !(hasText || State.draftImages.length > 0);
+  $('#btnPublish').disabled = !(hasText || State.draftImages.length > 0 || (State.draftAudios || []).length > 0);
 }
 function updateCounter() {
   var len = $('#composerText').value.length;
@@ -4005,9 +4350,10 @@ function addImages(files) {
 function publish() {
   var text = TextFmt.normalize($('#composerText').value).trim();
   var imgs = State.draftImages;
-  if (!text && !imgs.length) { toast('写点什么再发表吧'); return; }
+  var audios = State.draftAudios || [];
+  if (!text && !imgs.length && !audios.length) { toast('写点什么再发表吧'); return; }
   $('#btnPublish').disabled = true;
-  publishCore(text, imgs).catch(function (err) {
+  publishCore(text, imgs, audios).catch(function (err) {
     console.error(err);
     $('#btnPublish').disabled = false;
     toast('保存失败：' + (err && err.message === 'quota' ? '本地存储空间已满' : (err && err.message) || '未知错误'));
@@ -4017,29 +4363,45 @@ function publish() {
  * 发表的核心：与输入框解耦，接收已经整理好的文本与图片。
  * 抽出来是为了让回归测试能直接投递长文本（验证折叠），不必去驱动 textarea。
  */
-function publishCore(text, imgs) {
+function publishCore(text, imgs, audios) {
+  if (audios === undefined) audios = State.draftAudios || [];
   var entryId = State.editingId || uid();
   var now = Date.now();
   var keepIds = imgs.map(function (it) { return it.id; });
+  var keepAudioIds = audios.map(function (a) { return a.id; });
 
   return Store.getEntry(entryId).then(function (old) {
-    // 1) 写入（或覆盖）本次要保留的图片记录
-    return Promise.all(imgs.map(function (it, idx) {
-      return Store.putImage({
-        id: it.id, entryId: entryId, w: it.w, h: it.h,
-        size: it.blob.size || 0, order: idx, blob: it.blob
-      });
-    })).then(function () {
-      // 2) 编辑场景：清理被移除的旧图
+    // 1) 写入（或覆盖）本次要保留的图片与语音记录
+    return Promise.all(
+      imgs.map(function (it, idx) {
+        return Store.putImage({
+          id: it.id, entryId: entryId, w: it.w, h: it.h,
+          size: it.blob.size || 0, order: idx, blob: it.blob
+        });
+      }).concat(audios.map(function (a, idx) {
+        return Store.putAudio({
+          id: a.id, entryId: entryId, order: idx,
+          duration: a.duration, size: a.size || a.blob.size || 0,
+          mime: a.mime || '', blob: a.blob
+        });
+      }))
+    ).then(function () {
+      // 2) 编辑场景：清理被移除的旧图 / 旧语音
       var oldImages = (old && old.images) ? old.images : [];
+      var oldAudios = (old && old.audios) ? old.audios : [];
       var dropped = oldImages.filter(function (i) { return keepIds.indexOf(i) < 0; });
-      return Promise.all(dropped.map(function (i) { return Store.deleteImage(i); }));
+      var droppedAudios = oldAudios.filter(function (i) { return keepAudioIds.indexOf(i) < 0; });
+      return Promise.all(
+        dropped.map(function (i) { return Store.deleteImage(i); })
+          .concat(droppedAudios.map(function (i) { return Store.deleteAudio(i); }))
+      );
     }).then(function () {
       // 3) 写入日记条目（createdAt 保持首次发布时间）
       var entry = {
         id: entryId,
         text: text,
         images: keepIds,
+        audios: keepAudioIds,
         createdAt: (old && old.createdAt) ? old.createdAt : now,
         updatedAt: old ? now : 0
       };
@@ -4047,6 +4409,7 @@ function publishCore(text, imgs) {
     }).then(function () {
       State.editingId = null;
       State.draftImages = [];
+      State.draftAudios = [];
       // 这篇的时间如果落在当前筛选之外（比如正筛着 9 月、现在发的是 10 月），
       // 就把筛选放开 —— 否则发表后切回时间线看不到它，像是没发出去
       ensureVisibleInFilter((old && old.createdAt) ? old.createdAt : now);
@@ -4121,18 +4484,35 @@ function renderSettings() {
  * 抽成独立函数是为了让回归测试能拿到"用户点导出时同一份 JSON"来断言，
  * 而不是在测试里另写一遍序列化 —— 那样测的就不是真实导出结果了。
  */
-function buildBackup() {
+/**
+ * @param {object} opts  { includeAudio:boolean } —— 语音体积大，默认不进备份。
+ *   勾选后才把每段录音转 dataURL 塞进 _audioData，和图片的 _imageData 一个套路。
+ */
+function buildBackup(opts) {
+  var includeAudio = !!(opts && opts.includeAudio);
   return Store.listEntries().then(function (entries) {
     return Promise.all(entries.map(function (e) {
-      return Promise.all((e.images || []).map(function (iid) {
+      var imgJob = Promise.all((e.images || []).map(function (iid) {
         return Store.getImage(iid).then(function (rec) {
           if (!rec || !rec.blob) return null;
           return ImageProc.blobToDataURL(rec.blob).then(function (data) {
             return { id: iid, w: rec.w, h: rec.h, data: data };
           });
         });
-      })).then(function (imgs) {
-        return Object.assign({}, e, { _imageData: imgs.filter(Boolean) });
+      }));
+      var audioJob = includeAudio ? Promise.all((e.audios || []).map(function (aid) {
+        return Store.getAudio(aid).then(function (rec) {
+          if (!rec || !rec.blob) return null;
+          return ImageProc.blobToDataURL(rec.blob).then(function (data) {
+            return { id: aid, duration: rec.duration || 0, size: rec.size || 0, mime: rec.mime || '', data: data };
+          });
+        });
+      })) : Promise.resolve([]);
+      return Promise.all([imgJob, audioJob]).then(function (res) {
+        var extra = { _imageData: res[0].filter(Boolean) };
+        // 不打包语音时连字段都不写：老版本导入端看到干净的 entry，行为完全一致
+        if (includeAudio) extra._audioData = res[1].filter(Boolean);
+        return Object.assign({}, e, extra);
       });
     }));
   }).then(function (full) {
@@ -4140,6 +4520,7 @@ function buildBackup() {
       app: 'wechat-diary',
       schema: 1,
       exportedAt: new Date().toISOString(),
+      includeAudio: includeAudio,
       profile: { nickname: Meta.data.nickname, sign: Meta.data.sign },
       entryCount: full.length,
       entries: full
@@ -4195,12 +4576,12 @@ function buildTextBackup(entries, fmt) {
   if (md) {
     out.push('# 我的日记', '');
     out.push('> 导出时间：' + TimeFmt.full(Date.now()) + ' · 共 ' + list.length + ' 篇');
-    out.push('> 仅含文字，不含图片。要完整恢复（含图片）请使用 JSON 备份。', '');
+    out.push('> 仅含文字，不含图片与语音。要完整恢复（含图片）请使用 JSON 备份。', '');
   } else {
     out.push('我的日记 · 导出备份（纯文本）',
       '导出时间：' + TimeFmt.full(Date.now()),
       '共 ' + list.length + ' 篇日记', '',
-      '本文件仅含文字，不含图片，适合阅读与存档。',
+      '本文件仅含文字，不含图片与语音，适合阅读与存档。',
       '要完整恢复（含图片）请使用 JSON 备份。', '');
   }
   list.forEach(function (e, i) {
@@ -4224,9 +4605,9 @@ function buildTextBackup(entries, fmt) {
  * @param {string} [pass] 传了就加密 —— 适合要存网盘 / 发出去的场景；
  *                        不传就是原来的明文备份（可直接在任何编辑器里看）。
  */
-function exportBackup(pass) {
-  toast('正在打包…', 1000);
-  buildBackup().then(function (payload) {
+function exportBackup(pass, includeAudio) {
+  toast(includeAudio ? '正在打包（含语音）…' : '正在打包…', 1000);
+  buildBackup({ includeAudio: !!includeAudio }).then(function (payload) {
     // JSON.stringify 会自动把换行写成 \n，缩进 2 便于人工查看。
     // 换行在文件里就是 `\n` 两个字符，任何编辑器打开都能看懂，
     // 不会出现"显示的不是我写的文本"。
@@ -4273,14 +4654,18 @@ function exportTextBackup(fmt) {
 function confirmExport(format) {
   format = (format === 'txt' || format === 'md' || format === 'json-enc') ? format : 'json';
   var enc = (format === 'json-enc');
-  Store.listEntries().then(function (entries) {
+  Promise.all([Store.listEntries(), Store.listAudios()]).then(function (res) {
+    var entries = res[0], audios = res[1] || [];
     var n = entries.length;
+    var hasAudio = audios.length > 0;
+    var isJson = (format === 'json' || enc);
     var body;
     if (!n) {
       body = '当前还没有日记。\n仍要导出一份空的备份文件吗？';
     } else if (format === 'json') {
       body = '将导出 <b>' + n + ' 篇日记</b>（最近一篇：' + TimeFmt.full(entries[0].createdAt) + '）。\n' +
-        '含图片，可完整恢复。文件保存在本机，不会上传到任何地方。';
+        '含图片，可完整恢复。文件保存在本机，不会上传到任何地方。' +
+        (hasAudio ? '\n这篇里有语音，默认不打包；需要的话勾上下面的选项。' : '');
     } else if (enc) {
       body = '将导出 <b>' + n + ' 篇日记</b>的<b>加密备份</b>。\n' +
         '内容会被打乱成密文，适合存到网盘或发给自己 —— 别人拿到文件也打不开。';
@@ -4292,16 +4677,17 @@ function confirmExport(format) {
      * 加密那条路多一步：先确认要导，再单独弹窗收口令。
      * 拆开是因为口令框要占地方、需要两次输入确认，塞进同一个确认框会又挤又容易误填。
      */
+    var readAudioOpt = function (vals) { return !!(vals && vals[0] === true); };
     var buttons = enc
       ? [
         { label: '取消' },
-        { label: '下一步', style: 'primary', onClick: function () { askBackupPassphrase(n); } }
+        { label: '下一步', style: 'primary', onClick: function (vals) { askBackupPassphrase(n, readAudioOpt(vals)); } }
       ]
       : [
         { label: '取消' },
         {
-          label: '导出', style: 'primary', onClick: function () {
-            if (format === 'json') exportBackup(); else exportTextBackup(format);
+          label: '导出', style: 'primary', onClick: function (vals) {
+            if (format === 'json') exportBackup(null, readAudioOpt(vals)); else exportTextBackup(format);
         }
         }
       ];
@@ -4310,6 +4696,11 @@ function confirmExport(format) {
       html: true,
       text: body,
       hint: enc ? '口令至少 8 位，且不会被保存 —— 忘记就真的恢复不了。' : '',
+      // 只在「确实有语音」且是 JSON 系格式时给这个勾选项，默认不勾
+      inputs: (isJson && hasAudio) ? [{
+        type: 'checkbox', checked: false,
+        label: '同时打包语音（文件会明显变大；webm/mp4 跨系统可能放不出来）'
+      }] : [],
       buttons: buttons
     });
   }).catch(function () { toast('读取本地数据失败'); });
@@ -4319,7 +4710,7 @@ function confirmExport(format) {
  * 收备份口令：两次输入一致、且至少 8 位才放行。
  * 校验不过时**带着已填内容重新弹一次**，省得用户从头再点一遍菜单。
  */
-function askBackupPassphrase(entryCount) {
+function askBackupPassphrase(entryCount, includeAudio) {
   function ask(prefill) {
     openDialog({
       title: '设置备份口令',
@@ -4339,7 +4730,7 @@ function askBackupPassphrase(entryCount) {
             var pass = vals[0] || '', pass2 = vals[1] || '';
             if (pass.length < 8) { toast('口令至少 8 位', 2200); ask(pass); return; }
             if (pass !== pass2) { toast('两次输入的口令不一致', 2200); ask(pass); return; }
-            exportBackup(pass);
+            exportBackup(pass, includeAudio);
           }
         }
       ]
@@ -4571,8 +4962,23 @@ function doImport(data) {
   return data.entries.reduce(function (chain, e) {
     return chain.then(function () {
       var entryId = e.id || uid();
-      var ids = [];
-      return (e._imageData || []).reduce(function (c2, im) {
+      var ids = [], audioIds = [];
+      // 语音与图片同套路：只有备份里真的带 _audioData 才恢复，
+      // 默认（不含媒体）的备份导入后不会留下一个点开就报「已丢失」的空壳语音条。
+      var audioJob = (e._audioData || []).reduce(function (c0, au) {
+        return c0.then(function () {
+          var blob;
+          try { blob = ImageProc.dataURLToBlob(au.data); } catch (err) { return; }
+          var aid = au.id || uid();
+          audioIds.push(aid);
+          return Store.putAudio({
+            id: aid, entryId: entryId,
+            duration: au.duration || 0, size: au.size || blob.size || 0,
+            mime: au.mime || '', blob: blob
+          });
+        });
+      }, Promise.resolve());
+      var imageJob = (e._imageData || []).reduce(function (c2, im) {
         return c2.then(function () {
           var imgId = im.id || uid();
           var blob;
@@ -4583,11 +4989,13 @@ function doImport(data) {
             size: blob.size || 0, blob: blob
           });
         });
-      }, Promise.resolve()).then(function () {
+      }, Promise.resolve());
+      return Promise.all([audioJob, imageJob]).then(function () {
         return Store.saveEntry({
           id: entryId,
           text: e.text || '',
           images: ids,
+          audios: audioIds,
           createdAt: e.createdAt || Date.now(),
           updatedAt: e.updatedAt || 0
         });
@@ -4992,7 +5400,8 @@ function bindEvents() {
 
   /* --- 发布页 --- */
   $('#btnCancelCompose').addEventListener('click', function () {
-    if ($('#composerText').value.trim() || State.draftImages.length) {
+    VoiceRecorder.cancel();
+    if ($('#composerText').value.trim() || State.draftImages.length || (State.draftAudios || []).length) {
       openDialog({
         title: '放弃这次编辑？',
         text: '已输入的内容不会被保存。',
@@ -5007,7 +5416,15 @@ function bindEvents() {
                   urlCache.delete(it.id);
                 }
               });
+              // 草稿语音试听时可能已经创建过 Blob URL，一并释放
+              (State.draftAudios || []).forEach(function (a) {
+                if (urlCache.has(a.id)) {
+                  try { URL.revokeObjectURL(urlCache.get(a.id)); } catch (e) {}
+                  urlCache.delete(a.id);
+                }
+              });
               State.draftImages = [];
+              State.draftAudios = [];
               State.editingId = null;
               hideScreen('#screen-composer');
               loadHome();   // 重绘时间线，保证被释放的图片重新取回
@@ -5016,6 +5433,7 @@ function bindEvents() {
         ]
       });
     } else {
+      State.draftAudios = [];
       hideScreen('#screen-composer');
     }
   });
@@ -5030,6 +5448,57 @@ function bindEvents() {
     }
   });
   $('#btnPublish').addEventListener('click', publish);
+
+  /* --- 语音：录音按钮 + 全局委托（发布页草稿与时间线共用一套 DOM 约定） --- */
+  $('#btnRecord').addEventListener('click', function () {
+    if (VoiceRecorder.recording) { VoiceRecorder.stop(); return; }
+    if ((State.draftAudios || []).length >= VoiceRecorder.MAX_PER_ENTRY) { toast('一篇最多 3 段语音'); return; }
+    if (Store.mode !== 'idb') toast('当前为降级存储，长语音可能保存失败', 2600);
+    var btn = $('#btnRecord');
+    VoiceRecorder.start(
+      function (ms) {
+        btn.classList.add('recording');
+        btn.disabled = false;
+        var l = $('#btnRecordLabel');
+        if (l) l.textContent = '停止录音  ' + fmtVoiceTime(ms);
+      },
+      function (blob, mime, ms) {
+        State.draftAudios.push({ id: uid(), blob: blob, mime: mime, duration: ms, size: blob.size });
+        renderComposerAudios();
+        updatePublishState();
+        toast('已添加语音 ' + fmtVoiceTime(ms), 1800);
+      },
+      function (msg) { renderComposerAudios(); toast(msg, 2800); }
+    );
+  });
+  document.addEventListener('click', function (ev) {
+    var del = ev.target.closest('[data-audio-del]');
+    if (del) {
+      var did = del.getAttribute('data-audio-del');
+      stopVoice();
+      if (urlCache.has(did)) {
+        try { URL.revokeObjectURL(urlCache.get(did)); } catch (e) {}
+        urlCache.delete(did);
+      }
+      State.draftAudios = (State.draftAudios || []).filter(function (a) { return a.id !== did; });
+      renderComposerAudios();
+      updatePublishState();
+      return;
+    }
+    var play = ev.target.closest('[data-audio-play]');
+    if (play) { toggleVoice(play.getAttribute('data-audio-play')); return; }
+    var seek = ev.target.closest('[data-audio-seek]');
+    if (seek) {
+      var sid = seek.getAttribute('data-audio-seek');
+      if (voiceEl && voicePlayingId === sid) {
+        var r = seek.getBoundingClientRect();
+        var ratio = Math.min(1, Math.max(0, (ev.clientX - r.left) / Math.max(1, r.width)));
+        getVoiceBlob(sid).then(function (hit) {
+          if (hit && voiceEl) voiceEl.currentTime = hit.duration / 1000 * ratio;
+        });
+      }
+    }
+  });
 
   /* --- 我的（设置） --- */
   $('#setAvatar').addEventListener('click', function () {
@@ -5593,7 +6062,7 @@ if (document.readyState === 'loading') {
 /* 供控制台调试 / 自动化测试使用 */
 window.__diary__ = {
   Store: Store, Meta: Meta, State: State, ImageProc: ImageProc, TimeFmt: TimeFmt, TextFmt: TextFmt, Lock: Lock,
-  BackupCrypto: BackupCrypto,
+  BackupCrypto: BackupCrypto, VoiceRecorder: VoiceRecorder,
   loadHome: loadHome, switchTab: switchTab, enterApp: enterApp, renderStats: renderStats,
   renderSettings: renderSettings, renderProfile: renderProfile,
   syncTabBack: syncTabBack,
@@ -5603,7 +6072,7 @@ window.__diary__ = {
   showUnlock: showUnlock, askClosePin: askClosePin, askChangePin: askChangePin,
   pickExportFormat: pickExportFormat, pickImportFormat: pickImportFormat, exportTextBackup: exportTextBackup,
   buildTextBackup: buildTextBackup, parseTextBackup: parseTextBackup, doImportText: doImportText,
-  parseBackupText: parseBackupText, importBackup: importBackup,
+  parseBackupText: parseBackupText, importBackup: importBackup, doImport: doImport,
   showCover: showCover, togglePostText: togglePostText, showDetail: showDetail,
   openDialog: openDialog, closeMask: closeMask, openProfileImage: openProfileImage,
   publishCore: publishCore, buildBackup: buildBackup, backupFileName: backupFileName,
@@ -5618,7 +6087,7 @@ window.__diary__ = {
   publishText: function (text) {
     State.editingId = null;
     State.draftImages = [];
-    return publishCore(TextFmt.normalize(text).trim(), []);
+    return publishCore(TextFmt.normalize(text).trim(), [], []);
   },
   // 回归脚本要注入跨年月的数据后手动重绘（时间线 / 相册的年月筛选）
   renderTimeline: renderTimeline, renderGallery: renderGallery, galleryItems: galleryItems,

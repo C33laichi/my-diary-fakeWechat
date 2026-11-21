@@ -224,6 +224,7 @@ adb install -r mobile/android/app/build/outputs/apk/debug/app-debug.apk
 |---|---|---|---|
 | 系统返回键 | 浏览器自己的后退 | 分层消费：弹层 → 大图 → 二级页 → 才退出 | `@capacitor/app` |
 | 导出备份 | `<a download>` | 写入缓存目录 + 调起系统分享面板 | `@capacitor/filesystem` + `@capacitor/share` |
+| 录语音 | `getUserMedia` + `MediaRecorder` | 同一份代码；Capacitor 的 `BridgeWebChromeClient` 会把 `AUDIO_CAPTURE` 映射成麦克风权限并弹授权 | `RECORD_AUDIO` + `MODIFY_AUDIO_SETTINGS` |
 | 状态栏 | 无 | 跟随深浅主题切换图标明暗 | `@capacitor/status-bar` |
 | 「拍摄」 | `<input capture>` | 原生相机，且照片**同时写入系统相册** | `@capacitor/camera` |
 

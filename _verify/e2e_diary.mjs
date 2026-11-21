@@ -1663,6 +1663,100 @@ try {
   }).then(() => window.__diary__.loadHome())`);
   await sleep(1200);
 
+  console.log('\n[17j] 语音日记：录制 → 草稿 → 发表 → 时间线语音条 → 备份可选打包 → 导入 → 级联清理');
+  // 注入假的麦克风与 MediaRecorder：CDP 里没有真实录音设备，但整条
+  // 「getUserMedia → MediaRecorder → Blob → 草稿 → 入库 → 备份」链路都是真代码。
+  await cdp.evalJs(`(() => {
+    window.__fakeStream = { getTracks: function () { return []; } };
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: function () { return Promise.resolve(window.__fakeStream); } }
+    });
+    window.MediaRecorder = function () {
+      var self = this;
+      this.start = function () {};
+      this.stop = function () {
+        setTimeout(function () {
+          if (self.ondataavailable) self.ondataavailable({ data: new Blob(['FAKE-VOICE-DATA'], { type: 'audio/webm' }) });
+          if (self.onstop) self.onstop();
+        }, 0);
+      };
+    };
+    window.MediaRecorder.isTypeSupported = function (m) { return m === 'audio/webm;codecs=opus'; };
+    return true; })()`);
+  check('注入假麦克风后录制能力可用', await cdp.evalJs(`window.__diary__.VoiceRecorder.available()`) === true);
+  await cdp.clickSel('#tabbar .tab[data-tab="home"]');
+  await sleep(500);
+  await cdp.clickSel('#fabWrite');
+  await sleep(600);
+  await cdp.clickSel('#btnRecord');
+  await sleep(400);
+  check('录音中按钮变成「停止录音」',
+    /停止录音/.test(await cdp.evalJs(`document.getElementById('btnRecordLabel').textContent`)));
+  await cdp.clickSel('#btnRecord');
+  await sleep(500);
+  check('停止后草稿里有一段语音',
+    await cdp.evalJs(`window.__diary__.State.draftAudios.length`) === 1);
+  check('草稿区渲染出语音行（播放/进度/时长/删除）',
+    await cdp.evalJs(`document.querySelectorAll('#composerAudios .audio-row').length`) === 1);
+  check('时长是我们自己记的，不依赖 <audio>.duration',
+    /^\d+:\d\d$/.test(await cdp.evalJs(`document.querySelector('#composerAudios .audio-meta').textContent`)));
+  await cdp.evalJs(`(() => { const t = document.getElementById('composerText');
+    t.value = '语音日记测试 AUV-991'; t.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+  await cdp.clickSel('#btnPublish');
+  await sleep(1500);
+  const vEntry = await cdp.evalJs(`window.__diary__.Store.listEntries().then(l =>
+    l.find(e => (e.text || '').indexOf('AUV-991') >= 0) || null)`);
+  check('发表后 entry 带 audios 数组', !!vEntry && (vEntry.audios || []).length === 1,
+    vEntry ? JSON.stringify(vEntry.audios) : '未找到');
+  check('语音进了独立的 audio 仓库',
+    await cdp.evalJs(`window.__diary__.Store.listAudios().then(a => a.length)`) === 1);
+  await cdp.clickSel('#tabbar .tab[data-tab="timeline"]');
+  await sleep(700);
+  check('时间线渲染出语音条',
+    await cdp.evalJs(`document.querySelectorAll('#timeline .post-audio .audio-row').length`) >= 1);
+  check('语音条时长异步回填（不是占位符 …）',
+    await cdp.evalJs(`(() => { const e = document.querySelector('[data-voice-time]');
+      return !!e && e.textContent !== '…'; })()`));
+  // 备份：默认只带文字与图片，勾选后才把语音塞进 _audioData
+  const noA = await cdp.evalJs(`window.__diary__.buildBackup()`);
+  check('默认备份不含语音（includeAudio=false，且无 _audioData）',
+    noA.includeAudio === false && !noA.entries[0]._audioData);
+  const withA = await cdp.evalJs(`window.__diary__.buildBackup({ includeAudio: true })`);
+  const au0 = withA.entries.find(e => (e.text || '').indexOf('AUV-991') >= 0);
+  check('勾选后备份带 _audioData（base64 + 时长 + mime）',
+    !!au0 && !!au0._audioData && au0._audioData.length === 1 &&
+    /^data:/.test(au0._audioData[0].data) && typeof au0._audioData[0].duration === 'number',
+    au0 ? JSON.stringify(Object.keys(au0._audioData[0] || {})) : '未找到');
+  await cdp.evalJs(`window.__diary__.confirmExport('json')`);
+  await sleep(500);
+  check('有语音时导出确认框给出勾选',
+    await cdp.evalJs(`document.querySelectorAll('#dialogInputs input[type="checkbox"]').length`) === 1);
+  check('勾选默认不勾（默认不含媒体）',
+    await cdp.evalJs(`document.querySelector('#dialogInputs input[type="checkbox"]').checked`) === false);
+  await cdp.evalJs(`window.__diary__.closeMask()`);
+  await sleep(350);
+  check('纯文本导出写明不含语音',
+    /不含图片与语音/.test(await cdp.evalJs(`window.__diary__.buildTextBackup(${JSON.stringify(noA.entries)}, 'txt')`)));
+  // 导入恢复：先删掉本机音频，再用带媒体的备份导回来
+  const aid = vEntry.audios[0];
+  await cdp.evalJs(`window.__diary__.Store.deleteAudio(${JSON.stringify(aid)})`);
+  check('前提：本机音频已删掉',
+    await cdp.evalJs(`window.__diary__.Store.getAudio(${JSON.stringify(aid)}).then(r => !r)`) === true);
+  await cdp.evalJs(`window.__diary__.doImport(${JSON.stringify(withA)}).then(n => n)`);
+  await sleep(400);
+  check('导入带媒体的备份能把语音写回 audio 仓库',
+    await cdp.evalJs(`window.__diary__.Store.getAudio(${JSON.stringify(aid)}).then(r => !!r && !!r.blob)`) === true);
+  check('导入后的 entry 也带上 audios',
+    await cdp.evalJs(`window.__diary__.Store.getEntry(${JSON.stringify(vEntry.id)}).then(e => (e.audios||[]).length)`) === 1);
+  await cdp.evalJs(`window.__diary__.Store.deleteEntryCascade(${JSON.stringify(vEntry.id)})`);
+  await sleep(400);
+  check('删除日记时语音被级联清掉（不留孤儿）',
+    await cdp.evalJs(`window.__diary__.Store.listAudios().then(a => a.filter(x => x.entryId === ${JSON.stringify(vEntry.id)}).length)`) === 0);
+  await cdp.evalJs(`window.__diary__.loadHome()`);
+  await sleep(600);
+  check('语音这一串操作同样没落任何文件', dlCount() === 0);
+
   console.log('\n[17i] 返回首页：磁贴进来的有、底部栏进来的没有');
   // 口径：从首页磁贴跳到某个标签页 = 进了个"下级页"，得有明确的回头路；
   //      从底部栏切过去 = 本来就在底部栏里，再给个返回键是多余的。

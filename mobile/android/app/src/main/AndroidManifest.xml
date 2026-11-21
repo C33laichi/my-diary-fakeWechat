@@ -40,6 +40,12 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- 语音日记：WebView 的 getUserMedia 需要麦克风权限；
+         MODIFY_AUDIO_SETTINGS 是部分 WebView 在录音时要求的配套项。
+         这两条是运行时权限，首次录音会由系统弹窗询问。 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
     <!-- 「拍摄」要把照片同时写进手机系统相册（@capacitor/camera 的 saveToGallery）。
          插件官方说明：除了 saveToGallery 以外它不需要任何权限，所以这两条只在
          需要它们的系统版本上申请，避免在新系统上白要权限：
