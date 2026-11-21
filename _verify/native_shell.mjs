@@ -311,7 +311,17 @@ try {
   check('写盘内容是明文 JSON，不是 base64', wf && /^\s*\{/.test(wf[0].data),
     wf ? JSON.stringify(String(wf[0].data).slice(0, 24)) : '');
   check('文件名是 .json', wf && /\.json$/.test(wf[0].path), wf && wf[0].path);
-  check('分享的是文件 URI', sh && typeof sh[0].url === 'string' && sh[0].url.startsWith('file://'), sh && sh[0].url);
+  // ★ v2.8.1：以前同时传 text + url，Capacitor 会把 url 转成 files，
+  //   生成「EXTRA_TEXT + EXTRA_STREAM」混合 Intent，部分国内 ROM 直接闪退。
+  //   现在只传 files，拿写盘返回的 content/file URI 去分享。
+  check('分享只传 files，不混传 text / url',
+    sh && Array.isArray(sh[0].files) && sh[0].files.length === 1 &&
+    typeof sh[0].files[0] === 'string' && sh[0].files[0].startsWith('file://') &&
+    !('url' in sh[0]) && !('text' in sh[0]),
+    sh ? JSON.stringify(sh[0]) : '未捕获 Share 调用');
+  check('分享的 URI 指向刚写盘那份备份',
+    sh && wf && sh[0].files && sh[0].files[0].endsWith('/' + wf[0].path),
+    sh && wf ? sh[0].files[0] + ' vs ' + wf[0].path : '');
   // 直接解析「写进文件的那段文本」—— 用户把这个文件交给任何 JSON 解析器都应当立刻读得懂
   const decoded = await ev(`(() => { try {
       var o = JSON.parse(${JSON.stringify(wf[0].data)});

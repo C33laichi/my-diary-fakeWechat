@@ -1607,7 +1607,7 @@ function syncNativeStatusBar(dark) {
  *    用任何解析器都读不出内容（用户看到的就是一堆乱码，以为备份里不是自己的日记）。
  *    要写字符串就 `encoding:'utf8'` + 原始文本，别再做 base64 往返。
  */
-function saveBackupFile(fileName, text, mime) {
+function saveBackupFile(fileName, text, mime, onSaved) {
   if (!Native.isNative) {
     var blob = new Blob([text], { type: mime || 'application/json' });
     var url = URL.createObjectURL(blob);
@@ -1618,6 +1618,7 @@ function saveBackupFile(fileName, text, mime) {
     a.click();
     document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+    if (onSaved) onSaved();
     return Promise.resolve('download');
   }
   var Filesystem = Native.plugin('Filesystem');
@@ -1630,11 +1631,13 @@ function saveBackupFile(fileName, text, mime) {
     encoding: 'utf8',
     recursive: true
   }).then(function (res) {
+    // ★ 文件已经落盘 —— 先把"成功"反馈出去，再调分享面板。
+    //   分享是附加步骤（可能闪退、可能被用户取消），但备份此刻已经生成成功。
+    if (onSaved) onSaved(res.uri);
     return Share.share({
       title: '我的日记备份',
-      text: fileName,
-      url: res.uri,
-      dialogTitle: '保存或分享备份文件'
+      dialogTitle: '保存或分享备份文件',
+      files: [res.uri]
     });
   }).then(function () { return 'share'; });
 }
@@ -3235,8 +3238,12 @@ function renderDesktop() {
   }
   var e = list[0];
   var imgs = e.images || [];
+  var auds = e.audios || [];
   // 首页「最近记录」只放一段摘要：把换行压成空格压成一行，是刻意的（那是预览不是正文）
-  var excerpt = e.text ? TextFmt.normalize(e.text).replace(/\n+/g, ' ').trim() : '（只有图片）';
+  // 没文字时要按"实际有什么媒体"说清楚 —— 只写「（只有图片）」会把纯语音日记说错
+  var mediaHint = imgs.length && auds.length ? '（只有图片和语音）'
+    : imgs.length ? '（只有图片）' : auds.length ? '（只有语音）' : '（无文字）';
+  var excerpt = e.text ? TextFmt.normalize(e.text).replace(/\n+/g, ' ').trim() : mediaHint;
   wrap.innerHTML =
     '<div class="dr-head">最近记录<button id="drMore">查看全部</button></div>' +
     '<div class="dr-body">' +
@@ -3244,7 +3251,8 @@ function renderDesktop() {
       '<div class="dr-text">' +
         '<div class="dr-excerpt">' + escapeHtml(excerpt) + '</div>' +
         '<div class="dr-meta">' + TimeFmt.rel(e.createdAt) +
-          (imgs.length ? ' · ' + imgs.length + ' 张图片' : '') + ' · 仅自己可见</div>' +
+          (imgs.length ? ' · ' + imgs.length + ' 张图片' : '') +
+          (auds.length ? ' · ' + auds.length + ' 段语音' : '') + ' · 仅自己可见</div>' +
       '</div>' +
     '</div>';
   hydrateImages(wrap);
@@ -4607,40 +4615,59 @@ function buildTextBackup(entries, fmt) {
  */
 function exportBackup(pass, includeAudio) {
   toast(includeAudio ? '正在打包（含语音）…' : '正在打包…', 1000);
+  /*
+   * ★ v2.8.1：把"成功"和"分享"分开看。
+   *   分享面板是附加步骤，某些国内 ROM 上点一下就会把整个 WebView 带崩，
+   *   用户看到的就是"点了导出直接闪退，也不知道到底导出没有"。
+   *   现在文件一落盘就先报成功；后面分享就算失败 / 被取消，也不改成"导出失败"。
+   */
+  var saved = false;
+  var count = 0;
+  var onSaved = function (uri) {
+    saved = true;
+    // uri 只有原生分支才有；网页版走 <a download>，直接说下载完成。
+    toast(uri ? '备份已生成，正在打开分享面板…'
+      : '已导出 ' + count + ' 篇日记到下载目录', 2600);
+  };
   buildBackup({ includeAudio: !!includeAudio }).then(function (payload) {
+    count = payload.entryCount;
     // JSON.stringify 会自动把换行写成 \n，缩进 2 便于人工查看。
     // 换行在文件里就是 `\n` 两个字符，任何编辑器打开都能看懂，
     // 不会出现"显示的不是我写的文本"。
     var plain = JSON.stringify(payload, null, 2);
     if (!pass) {
-      return saveBackupFile(backupFileName('json'), plain).then(function () {
-        toast('已导出 ' + payload.entryCount + ' 篇日记');
-      });
+      return saveBackupFile(backupFileName('json'), plain, 'application/json', onSaved);
     }
     // 加密分支：PBKDF2 派生动辄几十万次迭代，手机上约 0.3~1 秒，所以先给个提示
     toast('正在加密…', 1500);
     return BackupCrypto.encrypt(plain, pass, backupFileName('json')).then(function (res) {
-      return saveBackupFile(res.fileName, JSON.stringify(res.payload, null, 2))
-        .then(function () { toast('已导出加密备份 · ' + payload.entryCount + ' 篇日记'); });
+      return saveBackupFile(res.fileName, JSON.stringify(res.payload, null, 2),
+        'application/json', onSaved);
     });
   }).catch(function (err) {
     console.error(err);
-    toast('导出失败：' + ((err && err.message) || '未知原因'), 2600);
+    toast(saved ? '备份文件已保存，但分享面板没打开'
+      : '导出失败：' + ((err && err.message) || '未知原因'), 3000);
   });
 }
 
 /** 纯文本 / Markdown 导出。不走 buildBackup（不需要读图片 base64），所以快得多 */
 function exportTextBackup(fmt) {
   toast('正在整理…', 1000);
+  var saved = false;
   Store.listEntries().then(function (entries) {
     var text = buildTextBackup(entries, fmt);
     return saveBackupFile(backupFileName(fmt), text,
-      fmt === 'md' ? 'text/markdown' : 'text/plain').then(function () {
-        toast('已导出 ' + entries.length + ' 篇日记');
+      fmt === 'md' ? 'text/markdown' : 'text/plain',
+      function (uri) {
+        saved = true;
+        toast(uri ? '备份已生成，正在打开分享面板…'
+          : '已导出 ' + entries.length + ' 篇日记到下载目录', 2600);
       });
   }).catch(function (err) {
     console.error(err);
-    toast('导出失败：' + ((err && err.message) || '未知原因'), 2600);
+    toast(saved ? '备份文件已保存，但分享面板没打开'
+      : '导出失败：' + ((err && err.message) || '未知原因'), 3000);
   });
 }
 
@@ -6003,10 +6030,15 @@ function openPostMenu(id) {
 function showDetail(e) {
   var meta = [TimeFmt.full(e.createdAt)];
   if (e.updatedAt) meta.push('修改于 ' + TimeFmt.full(e.updatedAt));
-  if (e.images && e.images.length) meta.push('共 ' + e.images.length + ' 张图片');
+  var imgN = e.images && e.images.length ? e.images.length : 0;
+  var audN = e.audios && e.audios.length ? e.audios.length : 0;
+  if (imgN) meta.push('共 ' + imgN + ' 张图片');
+  if (audN) meta.push('共 ' + audN + ' 段语音');
   meta.push('字数 ' + (e.text ? e.text.length : 0) + ' 字');
 
-  var body = e.text ? TextFmt.normalize(e.text) : '（这篇只有图片）';
+  var body = e.text ? TextFmt.normalize(e.text)
+    : (imgN && audN ? '（这篇只有图片和语音）' : imgN ? '（这篇只有图片）'
+      : audN ? '（这篇只有语音）' : '（这篇没有文字）');
   openDialog({
     title: '日记详情',
     text: meta.join('\n') + '\n\n' + body,

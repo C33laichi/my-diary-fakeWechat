@@ -1718,6 +1718,39 @@ try {
   check('语音条时长异步回填（不是占位符 …）',
     await cdp.evalJs(`(() => { const e = document.querySelector('[data-voice-time]');
       return !!e && e.textContent !== '…'; })()`));
+
+  // ★ v2.8.1：只记了一条语音、没打字也没配图时，首页「最近记录」曾错误写成"（只有图片）"。
+  //   走真实 UI 再发一篇纯语音的，直接读首页摘要，而不是只测 store 里的数据。
+  await cdp.clickSel('#tabbar .tab[data-tab="home"]');
+  await sleep(500);
+  await cdp.clickSel('#fabWrite');
+  await sleep(600);
+  await cdp.clickSel('#btnRecord');
+  await sleep(300);
+  await cdp.clickSel('#btnRecord');
+  await sleep(500);
+  check('纯语音这篇的草稿里确实没有文字',
+    await cdp.evalJs(`!(document.getElementById('composerText').value || '').trim()`));
+  await cdp.clickSel('#btnPublish');
+  await sleep(1300);
+  await cdp.clickSel('#tabbar .tab[data-tab="home"]');
+  await sleep(600);
+  const recentOnlyVoice = await cdp.evalJs(`document.getElementById('deskRecent').textContent`);
+  check('只有语音的日记，最近记录写「只有语音」而不是「只有图片」',
+    /只有语音/.test(recentOnlyVoice) && !/只有图片/.test(recentOnlyVoice),
+    recentOnlyVoice.replace(/\s+/g, ' ').slice(0, 100));
+  check('最近记录 meta 标出语音段数', /1 段语音/.test(recentOnlyVoice));
+  // 清掉这篇，让后面的计数断言仍只看 AUV-991 那一篇
+  await cdp.evalJs(`window.__diary__.Store.listEntries().then(l => {
+    const e = l.find(x => !(x.text || '').trim() && !(x.images || []).length && (x.audios || []).length === 1);
+    return e ? window.__diary__.Store.deleteEntryCascade(e.id) : null;
+  })`);
+  await sleep(400);
+  await cdp.evalJs(`window.__diary__.loadHome()`);
+  await sleep(400);
+  await cdp.clickSel('#tabbar .tab[data-tab="timeline"]');
+  await sleep(500);
+
   // 备份：默认只带文字与图片，勾选后才把语音塞进 _audioData
   const noA = await cdp.evalJs(`window.__diary__.buildBackup()`);
   check('默认备份不含语音（includeAudio=false，且无 _audioData）',
@@ -1756,6 +1789,25 @@ try {
   await cdp.evalJs(`window.__diary__.loadHome()`);
   await sleep(600);
   check('语音这一串操作同样没落任何文件', dlCount() === 0);
+
+  console.log('\n[17k] v2.8.1 导出修复：分享只传 files，成功反馈先于分享面板');
+  // 原生分支在桌面 CDP 里跑不到（Native.isNative 恒 false），用源码断言把这条修复锁住：
+  // 国内 ROM 上 text + url 混合 Intent 会直接闪退，回退成默认参数等于没修。
+  const appSrc = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'index.html'), 'utf8');
+  const saveFn = (appSrc.match(/function saveBackupFile\([\s\S]*?\n\}/) || [''])[0];
+  const shareCall = (saveFn.match(/Share\.share\(\{[\s\S]*?\}\)/) || [''])[0];
+  check('原生分享只传 files（不再混传 text / url）',
+    /files:\s*\[res\.uri\]/.test(shareCall) && !/\btext\s*:/.test(shareCall) && !/\burl\s*:/.test(shareCall),
+    shareCall.replace(/\s+/g, ' ').slice(0, 110));
+  check('文件一落盘就报成功，早于调分享面板',
+    saveFn.indexOf('onSaved(res.uri)') >= 0 &&
+    saveFn.indexOf('onSaved(res.uri)') < saveFn.indexOf('Share.share('));
+  check('三个导出入口都接了落盘回调',
+    /saveBackupFile\(backupFileName\('json'\), plain, 'application\/json', onSaved\)/.test(appSrc) &&
+    /saveBackupFile\(res\.fileName,[\s\S]{0,140}onSaved\)/.test(appSrc) &&
+    /saveBackupFile\(backupFileName\(fmt\)[\s\S]{0,220}function \(uri\)/.test(appSrc));
+  check('分享失败时不再谎报「导出失败」',
+    (appSrc.match(/备份文件已保存，但分享面板没打开/g) || []).length >= 2);
 
   console.log('\n[17i] 返回首页：磁贴进来的有、底部栏进来的没有');
   // 口径：从首页磁贴跳到某个标签页 = 进了个"下级页"，得有明确的回头路；
