@@ -1790,24 +1790,70 @@ try {
   await sleep(600);
   check('语音这一串操作同样没落任何文件', dlCount() === 0);
 
-  console.log('\n[17k] v2.8.1 导出修复：分享只传 files，成功反馈先于分享面板');
-  // 原生分支在桌面 CDP 里跑不到（Native.isNative 恒 false），用源码断言把这条修复锁住：
-  // 国内 ROM 上 text + url 混合 Intent 会直接闪退，回退成默认参数等于没修。
+  console.log('\n[17k] v2.8.1 导出修复：大文件分块写盘、分享只传 files、成功反馈先行');
+  // 原生分支在桌面 CDP 里跑不到（Native.isNative 恒 false），用源码断言 + 纯函数断言锁住：
+  // ① 大备份一次性过 bridge 会 OOM 闪退 → 必须分块 writeFile + appendFile；
+  // ② 国内 ROM 上 text + url 混合 Intent 会闪退 → 分享只传 files。
   const appSrc = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'index.html'), 'utf8');
   const saveFn = (appSrc.match(/function saveBackupFile\([\s\S]*?\n\}/) || [''])[0];
   const shareCall = (saveFn.match(/Share\.share\(\{[\s\S]*?\}\)/) || [''])[0];
+  check('大文件走分块：第一块 writeFile + 后续 appendFile',
+    /Filesystem\.writeFile\(/.test(saveFn) && /Filesystem\.appendFile\(/.test(saveFn) &&
+    /splitUtf8Chunks\(/.test(saveFn));
+  check('每块按字节切分（256KB 阈值）', /splitUtf8Chunks\(text, 256 \* 1024\)/.test(saveFn));
   check('原生分享只传 files（不再混传 text / url）',
-    /files:\s*\[res\.uri\]/.test(shareCall) && !/\btext\s*:/.test(shareCall) && !/\burl\s*:/.test(shareCall),
+    /files:\s*\[uri\]/.test(shareCall) && !/\btext\s*:/.test(shareCall) && !/\burl\s*:/.test(shareCall),
     shareCall.replace(/\s+/g, ' ').slice(0, 110));
   check('文件一落盘就报成功，早于调分享面板',
-    saveFn.indexOf('onSaved(res.uri)') >= 0 &&
-    saveFn.indexOf('onSaved(res.uri)') < saveFn.indexOf('Share.share('));
+    saveFn.indexOf('onSaved(uri)') >= 0 && saveFn.indexOf('onSaved(uri)') < saveFn.indexOf('Share.share('));
   check('三个导出入口都接了落盘回调',
     /saveBackupFile\(backupFileName\('json'\), plain, 'application\/json', onSaved\)/.test(appSrc) &&
     /saveBackupFile\(res\.fileName,[\s\S]{0,140}onSaved\)/.test(appSrc) &&
     /saveBackupFile\(backupFileName\(fmt\)[\s\S]{0,220}function \(uri\)/.test(appSrc));
   check('分享失败时不再谎报「导出失败」',
     (appSrc.match(/备份文件已保存，但分享面板没打开/g) || []).length >= 2);
+
+  // 分块函数的正确性：中文/emoji 边界不能被切断，拼回去必须与原文本逐字节一致
+  const chunkResult = await cdp.evalJs(`(() => {
+    const S = window.__diary__.splitUtf8Chunks;
+    const big = '日记'.repeat(300000) + '🎉结束';   // 远超 256KB，且切点会落在中文中间
+    const parts = S(big, 256 * 1024);
+    const joined = parts.join('');
+    const enc = new TextEncoder();
+    return {
+      n: parts.length,
+      maxBytes: Math.max(...parts.map(p => enc.encode(p).length)),
+      ok: joined === big,
+      srcBytes: enc.encode(big).length
+    };
+  })()`);
+  check('分块数 >1（确实触发了切分）', chunkResult.n > 1, `${chunkResult.n} 块 / ${chunkResult.srcBytes} 字节`);
+  check('每块不超过 256KB 阈值', chunkResult.maxBytes <= 256 * 1024, `最大 ${chunkResult.maxBytes} 字节`);
+  check('中文/emoji 边界未被切断，拼回与原文逐字节一致', chunkResult.ok);
+
+  console.log('\n[17L] 我的页「设置与关于」：版本自证 + 导出文件位置说明');
+  await cdp.clickSel('#tabbar .tab[data-tab="mine"]');
+  await sleep(600);
+  check('我的页顶部有「设置与关于」入口',
+    await cdp.evalJs(`!!document.getElementById('setInfo')`));
+  await cdp.clickSel('#setInfo');
+  await sleep(500);
+  const infoTitle = (await cdp.evalJs(`document.getElementById('dialogTitle').textContent`)).trim();
+  const infoText = await cdp.evalJs(`document.getElementById('dialogText').textContent`);
+  const infoHint = await cdp.evalJs(`document.querySelector('#dialogInputs .hint').textContent`);
+  check('点开面板标题是「设置与关于」', infoTitle === '设置与关于', infoTitle);
+  check('面板显示版本号 v2.9', /v2\.9/.test(infoText));
+  check('面板显示构建日期（可辨是不是新版）', /2026-11-21/.test(infoText));
+  check('网页版提示下载目录（平台路径正确）', /下载目录|Download/.test(infoText),
+    infoText.replace(/\s+/g, ' ').slice(0, 120));
+  check('面板说明数据只存本机不上传', /不会上传|只存在本机/.test(infoText));
+  check('有备份保存方式的使用说明', /分享面板|下载/.test(infoHint));
+  // 安卓真机路径：源码里必须按包名拼，不能写死到别的包名
+  const infoSrc = (appSrc.match(/function openInfoDialog\([\s\S]*?\n\}/) || [''])[0];
+  check('安卓路径按实际包名拼接',
+    /com\.chenchang\.diary/.test(infoSrc) && /data\/user\/0/.test(infoSrc) && /\/cache\//.test(infoSrc));
+  await cdp.evalJs(`window.__diary__.closeMask()`);
+  await sleep(350);
 
   console.log('\n[17i] 返回首页：磁贴进来的有、底部栏进来的没有');
   // 口径：从首页磁贴跳到某个标签页 = 进了个"下级页"，得有明确的回头路；

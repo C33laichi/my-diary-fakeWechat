@@ -170,11 +170,11 @@ docs/screenshots/       # README 效果图（由 _verify/docs_shots.mjs 生成�
 
 ## 自动化验证
 
-项目里的功能都有对应的浏览器回归脚本，共 **694 项断言**，不需要真机：
+项目里的功能都有对应的浏览器回归脚本，共 **707 项断言**，不需要真机：
 
 ```bash
 cd _verify
-node e2e_diary.mjs           # 446 项：网页版全量回归（含语音录制/备份链路，需先另开终端 node serve.cjs）
+node e2e_diary.mjs           # 459 项：网页版全量回归（含语音录制/备份链路，需先另开终端 node serve.cjs）
 node verify_close_pin.mjs    #  89 项：密码锁的关闭 / 修改流程
 node native_shell.mjs        #  37 项：注入假原生桥，验证返回键 / 原生导出 / 状态栏
 node verify_zoom_rotate.mjs  #  45 项：照片缩放（含缩小到 0.25x）/ 横屏适配 / 拍照回退

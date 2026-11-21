@@ -1170,6 +1170,16 @@ input,textarea{font-family:inherit}
     </header>
     <div class="scroll" id="settingsScroll">
 
+      <!-- ★ 设置入口：点开一个信息面板，看版本 + 导出文件到底落在哪。
+           放在页面最前，因为这是排查"装的是不是新版 / 备份去哪了"的第一站。 -->
+      <div class="set-group">
+        <button class="set-row" id="setInfo">
+          <span class="set-label">设置与关于</span>
+          <span class="set-value">版本 · 备份位置</span>
+          <svg class="set-arrow" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5 7 7.5l-5.5 6"/></svg>
+        </button>
+      </div>
+
       <div class="set-group-title">个人资料</div>
       <div class="set-group">
         <button class="set-row" id="setAvatar">
@@ -1246,6 +1256,7 @@ input,textarea{font-family:inherit}
         </button>
       </div>
       <div class="set-note">数据只存在于当前浏览器的本地数据库中。清除浏览器数据、更换设备或卸载应用都会导致日记丢失，请定期导出备份。</div>
+
       <div style="height:40px"></div>
     </div>
   </section>
@@ -1607,6 +1618,34 @@ function syncNativeStatusBar(dark) {
  *    用任何解析器都读不出内容（用户看到的就是一堆乱码，以为备份里不是自己的日记）。
  *    要写字符串就 `encoding:'utf8'` + 原始文本，别再做 base64 往返。
  */
+/**
+ * 把长文本按 UTF-8 字节切成若干块，每块都保证是完整的 UTF-8（不在中文/emoji 多字节中间断开）。
+ * 抽成纯函数是为了让回归能直接断言"切块拼回去和原文逐字节一致"，不必真机跑原生写入。
+ * @param {string} text
+ * @param {number} maxBytes 每块最大字节数
+ * @returns {string[]}
+ */
+function splitUtf8Chunks(text, maxBytes) {
+  var encoder = new TextEncoder();
+  var decoder = new TextDecoder('utf-8', { fatal: true }); // 半个多字节字符会抛错
+  var fullBytes = encoder.encode(text);
+  var chunks = [];
+  var off = 0;
+  while (off < fullBytes.length) {
+    var end = Math.min(off + maxBytes, fullBytes.length);
+    // 若切在中文/emoji 的多字节中间，fatal 解码抛错 —— 往前挪到字符边界
+    while (end > off) {
+      try { decoder.decode(fullBytes.subarray(off, end)); break; }
+      catch (e) { end--; }
+    }
+    if (end <= off) break; // 兜底防死循环
+    chunks.push(decoder.decode(fullBytes.subarray(off, end)));
+    off = end;
+  }
+  if (!chunks.length) chunks = [''];
+  return chunks;
+}
+
 function saveBackupFile(fileName, text, mime, onSaved) {
   if (!Native.isNative) {
     var blob = new Blob([text], { type: mime || 'application/json' });
@@ -1624,20 +1663,47 @@ function saveBackupFile(fileName, text, mime, onSaved) {
   var Filesystem = Native.plugin('Filesystem');
   var Share = Native.plugin('Share');
   if (!Filesystem || !Share) return Promise.reject(new Error('原生文件插件未就绪'));
+
+  /*
+   * ★★ 2026-11-21 真正的闪退根因 —— 大字符串一次性过 bridge 把 WebView 撑爆。
+   *   症状：勾选「同时打包语音」后，点导出、看到"正在打包"就闪退，没任何报错。
+   *   原因：语音转 base64 塞进 JSON，整份备份可能有好几十 MB。Capacitor 的
+   *         postMessage 是 `JSON.stringify(整个 options)` 一次性丢给原生，
+   *         一个几十 MB 的字符串在 WebView bridge 上会直接 OOM —— 这是原生层崩溃，
+   *         JS 的 try/catch 根本接不住，表现就是"点了就闪退，啥提示都没有"。
+   *   修法：把文本按字节切成小块（每块 256KB），第一块 writeFile、后续 appendFile，
+   *         每次只让小块过 bridge。用 TextEncoder 按字节切，保证不在中文的
+   *         UTF-8 多字节中间断开（否则写出来的备份会乱码、导入失败）。
+   */
+  var chunks = splitUtf8Chunks(text, 256 * 1024);
+
+  // 第一块用 writeFile 建文件；后续用 appendFile 追加。都明确 utf8（历史坑：base64 编码值已废弃）。
+  var first = chunks.shift();
   return Filesystem.writeFile({
     path: fileName,
-    data: text,
+    data: first,
     directory: 'CACHE',
     encoding: 'utf8',
     recursive: true
   }).then(function (res) {
-    // ★ 文件已经落盘 —— 先把"成功"反馈出去，再调分享面板。
-    //   分享是附加步骤（可能闪退、可能被用户取消），但备份此刻已经生成成功。
-    if (onSaved) onSaved(res.uri);
+    var uri = res.uri;
+    // 串行追加剩余块：并行 append 可能互相踩，必须一块写完再写下一块。
+    var chain = Promise.resolve();
+    chunks.forEach(function (c) {
+      chain = chain.then(function () {
+        return Filesystem.appendFile({
+          path: fileName, data: c, directory: 'CACHE', encoding: 'utf8'
+        });
+      });
+    });
+    return chain.then(function () { return uri; });
+  }).then(function (uri) {
+    // 文件已经落盘 —— 先把"成功"反馈出去，再调分享面板。
+    if (onSaved) onSaved(uri);
     return Share.share({
       title: '我的日记备份',
       dialogTitle: '保存或分享备份文件',
-      files: [res.uri]
+      files: [uri]
     });
   }).then(function () { return 'share'; });
 }
@@ -4133,6 +4199,45 @@ function openSheet(items) {
   };
   requestAnimationFrame(function () { $('#mask').classList.add('show'); });
 }
+/**
+ * 「设置与关于」面板：版本自证 + 导出文件到底落在哪。
+ * 版本精确到小版本 + 日期，真机反馈"改了没生效"时一眼可辨。
+ * 导出路径按平台给全，并说清楚"私有目录文件管理器打不开，要用分享面板另存"。
+ */
+function openInfoDialog() {
+  var APP_ID = 'com.chenchang.diary';
+  var ver = 'v2.9';
+  var built = '2026-11-21（设置与关于 + 分块导出修复）';
+  var plat = Native.platform || 'web';
+  var where, pathLine, note;
+  if (plat === 'android') {
+    pathLine = 'file:///data/user/0/' + APP_ID + '/cache/';
+    where = '安卓 App 的私有缓存目录';
+    note = '这是应用内部目录，手机自带的文件管理器看不到。备份文件名形如 my-diary-backup-20261121-1830.json。真正要保存/上传网盘时，请在分享面板里选「保存到文件」「网盘」或发给自己。';
+  } else if (plat === 'ios') {
+    pathLine = 'App 沙箱 /Library/Caches/（App 内部目录）';
+    where = 'iOS App 的缓存目录';
+    note = 'iOS 沙箱目录无法用「文件」App 直接打开。请在分享面板里选「存储到文件」把备份存到 iCloud Drive 或「我的 iPhone」。';
+  } else {
+    pathLine = '浏览器下载目录（Download）';
+    where = '电脑/浏览器的下载文件夹';
+    note = '网页版点导出后，文件会直接下载到浏览器的默认下载目录。';
+  }
+  openDialog({
+    title: '设置与关于',
+    html: true,
+    text: '当前版本：<b>' + ver + '</b>\n' +
+      '构建日期：' + built + '\n' +
+      '运行平台：' + plat + '\n\n' +
+      '备份文件位置：' + where + '\n' +
+      pathLine + '\n\n' +
+      '存储方式：' + (Store.mode === 'idb' ? 'IndexedDB（本地数据库）' : '本地存储') + '\n' +
+      '日记数据只存在本机，不会上传。',
+    hint: note,
+    buttons: [{ label: '知道了', style: 'primary' }]
+  });
+}
+
 function openDialog(opts) {
   clearTimeout(maskTimer);          // 同理，避免「面板→确认框」连开时被误隐藏
   $('#dialogTitle').textContent = opts.title || '';
@@ -4631,10 +4736,13 @@ function exportBackup(pass, includeAudio) {
   };
   buildBackup({ includeAudio: !!includeAudio }).then(function (payload) {
     count = payload.entryCount;
-    // JSON.stringify 会自动把换行写成 \n，缩进 2 便于人工查看。
-    // 换行在文件里就是 `\n` 两个字符，任何编辑器打开都能看懂，
-    // 不会出现"显示的不是我写的文本"。
-    var plain = JSON.stringify(payload, null, 2);
+    // ★ 阶段提示：分清楚是崩在"打包"（语音转 base64）还是"写文件/分享"。
+    //   用户反馈"正在打包后闪退"，有这条就能一眼看出打包有没有走完。
+    toast('打包完成，正在写入文件…', 2200);
+    // JSON.stringify 把换行写成 \n，任何编辑器打开都能看懂。
+    // ★ 含语音时用紧凑格式（无缩进）：缩进会让几十 MB 的备份再膨胀近一倍，
+    //   是触发大字符串 OOM 的直接帮凶。备份是给程序读的，不需要好看。
+    var plain = includeAudio ? JSON.stringify(payload) : JSON.stringify(payload, null, 2);
     if (!pass) {
       return saveBackupFile(backupFileName('json'), plain, 'application/json', onSaved);
     }
@@ -5619,6 +5727,7 @@ function bindEvents() {
   });
   $('#setExport').addEventListener('click', pickExportFormat);
   $('#setImport').addEventListener('click', pickImportFormat);
+  $('#setInfo').addEventListener('click', openInfoDialog);
   $('#fileImport').addEventListener('change', function () {
     if (this.files && this.files[0]) importBackup(this.files[0], pendingImportFormat);
     this.value = '';
@@ -6094,7 +6203,7 @@ if (document.readyState === 'loading') {
 /* 供控制台调试 / 自动化测试使用 */
 window.__diary__ = {
   Store: Store, Meta: Meta, State: State, ImageProc: ImageProc, TimeFmt: TimeFmt, TextFmt: TextFmt, Lock: Lock,
-  BackupCrypto: BackupCrypto, VoiceRecorder: VoiceRecorder,
+  BackupCrypto: BackupCrypto, VoiceRecorder: VoiceRecorder, splitUtf8Chunks: splitUtf8Chunks,
   loadHome: loadHome, switchTab: switchTab, enterApp: enterApp, renderStats: renderStats,
   renderSettings: renderSettings, renderProfile: renderProfile,
   syncTabBack: syncTabBack,
@@ -6105,7 +6214,7 @@ window.__diary__ = {
   pickExportFormat: pickExportFormat, pickImportFormat: pickImportFormat, exportTextBackup: exportTextBackup,
   buildTextBackup: buildTextBackup, parseTextBackup: parseTextBackup, doImportText: doImportText,
   parseBackupText: parseBackupText, importBackup: importBackup, doImport: doImport,
-  showCover: showCover, togglePostText: togglePostText, showDetail: showDetail,
+  showCover: showCover, togglePostText: togglePostText, showDetail: showDetail, openInfoDialog: openInfoDialog,
   openDialog: openDialog, closeMask: closeMask, openProfileImage: openProfileImage,
   publishCore: publishCore, buildBackup: buildBackup, backupFileName: backupFileName,
   openComposer: openComposer, renderComposerGrid: renderComposerGrid, addImages: addImages,

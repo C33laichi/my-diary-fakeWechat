@@ -62,6 +62,10 @@ window.__nativeCalls = [];
       writeFile: function (o) {
         rec('Filesystem', 'writeFile', [o]);
         return Promise.resolve({ uri: 'file:///data/user/0/com.chenchang.diary/cache/' + o.path });
+      },
+      appendFile: function (o) {
+        rec('Filesystem', 'appendFile', [o]);
+        return Promise.resolve();
       }
     },
     Share: {
