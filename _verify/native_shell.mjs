@@ -56,7 +56,8 @@ window.__nativeCalls = [];
         rec('App', 'addListener', [ev]);
         return { remove: function () {} };
       },
-      exitApp: function () { rec('App', 'exitApp', []); return Promise.resolve(); }
+      exitApp: function () { rec('App', 'exitApp', []); return Promise.resolve(); },
+      getInfo: function () { rec('App', 'getInfo', []); return Promise.resolve({ name: '我的日记', id: 'com.chenchang.diary', version: '2.9.1', build: '14' }); }
     },
     Filesystem: {
       writeFile: function (o) {
@@ -66,6 +67,10 @@ window.__nativeCalls = [];
       appendFile: function (o) {
         rec('Filesystem', 'appendFile', [o]);
         return Promise.resolve();
+      },
+      getUri: function (o) {
+        rec('Filesystem', 'getUri', [o]);
+        return Promise.resolve({ uri: 'file:///data/user/0/com.chenchang.diary/cache/' });
       }
     },
     Share: {
@@ -353,6 +358,19 @@ try {
   const sbLight = await lastCall('StatusBar', 'setStyle');
   check('浅色模式 → 状态栏用深色图标（Style LIGHT）', sbLight && sbLight[0].style === 'LIGHT', sbLight && sbLight[0].style);
   check('主题切换不产生重复的返回键监听', await ev(`window.__backListenerCount()`) === 1);
+
+  console.log('\n[F2] 设置与关于：版本号走原生 getInfo，路径走 getUri 校正');
+  await ev(`window.__diary__.switchTab('mine')`);
+  await sleep(400);
+  await ev(`window.__nativeCalls = []`);
+  await ev(`window.__diary__.openInfoDialog()`);
+  await sleep(500);
+  const infoText = await ev(`document.getElementById('dialogText').textContent`);
+  check('原生端调用了 App.getInfo', await callCount('App', 'getInfo') === 1);
+  check('原生端调用了 Filesystem.getUri 取真实备份目录', await callCount('Filesystem', 'getUri') === 1);
+  check('面板版本号被校正为原生 versionName 2.9.1', /v2\.9\.1/.test(infoText), infoText.replace(/\s+/g, ' ').slice(0, 80));
+  const uriCall = await lastCall('Filesystem', 'getUri');
+  check('getUri 指向 CACHE 目录', uriCall && uriCall[0] && uriCall[0].directory === 'CACHE', uriCall && uriCall[0] && uriCall[0].directory);
 
   console.log('\n[G] 控制台异常');
   const errs = events.filter((e) => e.method === 'Runtime.exceptionThrown')

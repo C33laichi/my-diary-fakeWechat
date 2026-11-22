@@ -1842,8 +1842,8 @@ try {
   const infoText = await cdp.evalJs(`document.getElementById('dialogText').textContent`);
   const infoHint = await cdp.evalJs(`document.querySelector('#dialogInputs .hint').textContent`);
   check('点开面板标题是「设置与关于」', infoTitle === '设置与关于', infoTitle);
-  check('面板显示版本号 v2.9', /v2\.9/.test(infoText));
-  check('面板显示构建日期（可辨是不是新版）', /2026-11-21/.test(infoText));
+  check('面板显示版本号（v + 版本号）', /v\d+\.\d+(\.\d+)?/.test(infoText), infoText);
+  check('面板显示构建日期（当天 YYYY-MM-DD）', /\d{4}-\d{2}-\d{2}/.test(infoText));
   check('网页版提示下载目录（平台路径正确）', /下载目录|Download/.test(infoText),
     infoText.replace(/\s+/g, ' ').slice(0, 120));
   check('面板说明数据只存本机不上传', /不会上传|只存在本机/.test(infoText));

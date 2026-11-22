@@ -368,10 +368,10 @@ input,textarea{font-family:inherit}
   transition:transform .2s ease;
 }
 .mask.show .dialog{transform:translate(-50%,-50%) scale(1)}
-.dialog-title{font-size:17px;font-weight:500;color:var(--text-strong);padding:22px 20px 0}
+.dialog-title{font-size:17px;font-weight:500;color:var(--text-strong);padding:22px 20px 0;text-align:center}
 /* 同 .post-text：换行只交给内容里的 <br>，这里不开 pre-wrap，避免换行被算两次 */
 .dialog-text{font-size:14px;color:var(--sub);line-height:1.6;padding:9px 20px 20px;
-  white-space:normal;word-break:break-word;max-height:46vh;overflow-y:auto}
+  white-space:normal;word-break:break-word;max-height:46vh;overflow-y:auto;text-align:left}
 .dialog-btns{display:flex;border-top:.5px solid var(--line)}
 .dialog-btns button{
   flex:1;height:50px;font-size:16.5px;color:var(--text);
@@ -388,7 +388,7 @@ input,textarea{font-family:inherit}
   background:var(--bg);color:var(--text);box-sizing:border-box;
   -webkit-appearance:none;appearance:none}
 .dialog-inputs input:focus{outline:none;border-color:var(--green)}
-.dialog-inputs .hint{font-size:12px;color:var(--sub);line-height:1.5}
+.dialog-inputs .hint{font-size:12px;color:var(--sub);line-height:1.5;text-align:left}
 /* checkbox 不能套用上面 42px 全宽输入框的样式，单独一条 */
 .dialog-inputs .dialog-check{
   display:flex;align-items:flex-start;gap:9px;font-size:12.5px;
@@ -498,11 +498,12 @@ input,textarea{font-family:inherit}
 }
 .set-row.danger .set-label{color:var(--danger)}
 .set-arrow{flex:none;color:var(--sub);opacity:.7}
-.set-input{
-  margin-left:auto;border:0;outline:none;background:transparent;text-align:right;
-  font-size:15px;color:var(--text);width:60%;border-bottom:1px solid transparent;
+.set-value.placeholder{color:var(--sub);opacity:.7}
+/* 设置行右侧的头像缩略图 */
+.avatar-thumb{
+  width:34px;height:34px;border-radius:7px;object-fit:cover;
+  display:block;margin-left:auto;background:#8E8E93;
 }
-.set-input:focus{border-bottom-color:var(--green)}
 .switch{
   margin-left:auto;width:51px;height:31px;border-radius:16px;background:#DDD;
   position:relative;transition:background .2s;flex:none;
@@ -1187,14 +1188,16 @@ input,textarea{font-family:inherit}
           <span class="set-value" id="setAvatarPreview"></span>
           <svg class="set-arrow" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5 7 7.5l-5.5 6"/></svg>
         </button>
-        <div class="set-row">
+        <button class="set-row" id="setNickname">
           <span class="set-label">昵称</span>
-          <input class="set-input" id="setNickname" maxlength="16" placeholder="我">
-        </div>
-        <div class="set-row">
+          <span class="set-value" id="setNicknameValue"></span>
+          <svg class="set-arrow" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5 7 7.5l-5.5 6"/></svg>
+        </button>
+        <button class="set-row" id="setSign">
           <span class="set-label">签名</span>
-          <input class="set-input" id="setSign" maxlength="40" placeholder="写句话给未来的自己">
-        </div>
+          <span class="set-value" id="setSignValue"></span>
+          <svg class="set-arrow" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5 7 7.5l-5.5 6"/></svg>
+        </button>
       </div>
 
       <div class="set-group-title">隐私（仅本人可见）</div>
@@ -2649,8 +2652,9 @@ function renderProfile() {
   var m = Meta.data;
   $('#meName').textContent = m.nickname || '我';
   $('#meSign').textContent = m.sign || '';
-  $('#setNickname').value = m.nickname || '';
-  $('#setSign').value = m.sign || '';
+  $('#setNicknameValue').textContent = m.nickname || '我';
+  $('#setSignValue').textContent = m.sign || '写句话给未来的自己';
+  $('#setSignValue').classList.toggle('placeholder', !m.sign);
   /**
    * 密码区的两个"行标题"，只看**开关**（pinEnabled）。
    * 用户的原话：「未打开密码时显示"打开密码"，打开之后显示"修改密码"；
@@ -2693,6 +2697,10 @@ function renderProfile() {
     escapeHtml(letter) + '</span>';
   imageURL('avatar').then(function (url) {
     if (url) { $('#avatarImg').src = url; $('#avatarImg').style.display = 'block'; $('#avatarLetter').style.display = 'none'; }
+    // 设置行右侧同步渲染头像缩略图（无图时清空，由占位/首字兜底）
+    var prev = $('#setAvatarPreview');
+    if (url) { prev.innerHTML = '<img class="avatar-thumb" alt="">'; prev.querySelector('img').src = url; }
+    else { prev.innerHTML = ''; }
   });
   // 封面
   imageURL('cover').then(function (url) {
@@ -4201,41 +4209,79 @@ function openSheet(items) {
 }
 /**
  * 「设置与关于」面板：版本自证 + 导出文件到底落在哪。
- * 版本精确到小版本 + 日期，真机反馈"改了没生效"时一眼可辨。
- * 导出路径按平台给全，并说清楚"私有目录文件管理器打不开，要用分享面板另存"。
+ * 版本号不再写死：原生端走 App.getInfo() 读安装包真实 versionName，
+ * 网页端读不到插件时才退回内置兜底版本；构建日期只显示打包当天，不挂变更描述。
+ * 导出路径先按平台给静态兜底，原生端再用 Filesystem.getUri() 取真实目录校正。
  */
+/* 网页兜底版本：原生包以 App.getInfo() 读到的 versionName 为准，这里只是读不到插件时的退路 */
+var APP_FALLBACK_VERSION = '2.9.1';
+
 function openInfoDialog() {
   var APP_ID = 'com.chenchang.diary';
-  var ver = 'v2.9';
-  var built = '2026-11-21（设置与关于 + 分块导出修复）';
   var plat = Native.platform || 'web';
   var where, pathLine, note;
   if (plat === 'android') {
     pathLine = 'file:///data/user/0/' + APP_ID + '/cache/';
     where = '安卓 App 的私有缓存目录';
-    note = '这是应用内部目录，手机自带的文件管理器看不到。备份文件名形如 my-diary-backup-20261121-1830.json。真正要保存/上传网盘时，请在分享面板里选「保存到文件」「网盘」或发给自己。';
+    note = '这个目录在 App 内部，普通人用手机自带的文件管理器看不到、也打不开。备份文件名形如 my-diary-backup-20261121-1830.json；真正要保存或上传网盘时，请在分享面板里选「保存到文件」「网盘」，或发给自己。';
   } else if (plat === 'ios') {
     pathLine = 'App 沙箱 /Library/Caches/（App 内部目录）';
     where = 'iOS App 的缓存目录';
-    note = 'iOS 沙箱目录无法用「文件」App 直接打开。请在分享面板里选「存储到文件」把备份存到 iCloud Drive 或「我的 iPhone」。';
+    note = '这个目录在 App 沙箱内，普通人无法用「文件」App 直接打开。请在分享面板里选「存储到文件」，把备份存到 iCloud Drive 或「我的 iPhone」。';
   } else {
     pathLine = '浏览器下载目录（Download）';
     where = '电脑/浏览器的下载文件夹';
-    note = '网页版点导出后，文件会直接下载到浏览器的默认下载目录。';
+    note = '网页版点导出后，文件会直接下载到浏览器的默认下载目录，在下载记录里就能找到。';
   }
-  openDialog({
-    title: '设置与关于',
-    html: true,
-    text: '当前版本：<b>' + ver + '</b>\n' +
-      '构建日期：' + built + '\n' +
-      '运行平台：' + plat + '\n\n' +
-      '备份文件位置：' + where + '\n' +
-      pathLine + '\n\n' +
-      '存储方式：' + (Store.mode === 'idb' ? 'IndexedDB（本地数据库）' : '本地存储') + '\n' +
-      '日记数据只存在本机，不会上传。',
-    hint: note,
-    buttons: [{ label: '知道了', style: 'primary' }]
-  });
+
+  // 构建日期：打包当天（本地时区），只留 YYYY-MM-DD，不附加变更描述
+  var now = new Date();
+  var built = now.getFullYear() + '-' +
+    String(now.getMonth() + 1).padStart(2, '0') + '-' +
+    String(now.getDate()).padStart(2, '0');
+
+  var ver = 'v' + APP_FALLBACK_VERSION;
+  // 仅原生私有目录才需要提示"普通人看不到"；网页下载目录在下载记录里可见
+  var hiddenNote = (plat === 'android' || plat === 'ios')
+    ? '\n（此目录为 App 内部目录，普通人在文件管理器里看不到）' : '';
+  var state = { ver: ver, built: built, plat: plat, where: where, pathLine: pathLine, note: note, hiddenNote: hiddenNote };
+
+  function render() {
+    openDialog({
+      title: '设置与关于',
+      html: true,
+      text: '当前版本：<b>' + state.ver + '</b>\n' +
+        '构建日期：' + state.built + '\n' +
+        '运行平台：' + state.plat + '\n\n' +
+        '备份文件位置：' + state.where + '\n' +
+        state.pathLine + state.hiddenNote + '\n\n' +
+        '存储方式：' + (Store.mode === 'idb' ? 'IndexedDB（本地数据库）' : '本地存储') + '\n' +
+        '日记数据只存在本机，不会上传。',
+      hint: state.note,
+      buttons: [{ label: '知道了', style: 'primary' }]
+    });
+  }
+
+  render();
+
+  // 原生端：异步读安装包真实版本号 + 真实备份目录，拿到后就地刷新面板
+  if (Native.isNative) {
+    var App = Native.plugin('App');
+    var Filesystem = Native.plugin('Filesystem');
+
+    if (App && App.getInfo) {
+      App.getInfo().then(function (info) {
+        if (info && info.version) state.ver = 'v' + info.version;
+        render();
+      }).catch(function () { /* 读不到就保留兜底版本 */ });
+    }
+
+    if (Filesystem && Filesystem.getUri) {
+      Filesystem.getUri({ path: '', directory: 'CACHE' }).then(function (res) {
+        if (res && res.uri) { state.pathLine = res.uri; render(); }
+      }).catch(function () { /* 读不到就保留静态兜底路径 */ });
+    }
+  }
 }
 
 function openDialog(opts) {
@@ -5649,13 +5695,47 @@ function bindEvents() {
       });
     });
   });
-  $('#setNickname').addEventListener('change', function () {
-    Meta.save({ nickname: this.value.trim() || '我' });
-    renderProfile(); renderTimeline(); renderDesktop();
+  /* 昵称：弹窗输入框修改，不再在设置行原地改 */
+  $('#setNickname').addEventListener('click', function () {
+    openDialog({
+      title: '修改昵称',
+      html: true,
+      text: '给日记里的自己起个称呼。',
+      hint: '最多 16 个字，留空则显示「我」。',
+      inputs: [{ type: 'text', placeholder: '我', value: Meta.data.nickname || '' }],
+      buttons: [
+        { label: '取消' },
+        {
+          label: '保存', style: 'primary', onClick: function (vals) {
+            var v = (vals[0] || '').trim();
+            Meta.save({ nickname: v || '我' });
+            renderProfile(); renderTimeline(); renderDesktop();
+            toast('昵称已更新');
+          }
+        }
+      ]
+    });
   });
-  $('#setSign').addEventListener('change', function () {
-    Meta.save({ sign: this.value.trim() });
-    renderProfile();
+  /* 签名：弹窗输入框修改，不再在设置行原地改 */
+  $('#setSign').addEventListener('click', function () {
+    openDialog({
+      title: '修改签名',
+      html: true,
+      text: '写句话给未来的自己。',
+      hint: '最多 40 个字，可留空。',
+      inputs: [{ type: 'text', placeholder: '写句话给未来的自己', value: Meta.data.sign || '' }],
+      buttons: [
+        { label: '取消' },
+        {
+          label: '保存', style: 'primary', onClick: function (vals) {
+            var v = (vals[0] || '').trim();
+            Meta.save({ sign: v });
+            renderProfile();
+            toast('签名已更新');
+          }
+        }
+      ]
+    });
   });
   $('#setCover').addEventListener('click', function () {
     var next = Meta.data.showCover === false;
