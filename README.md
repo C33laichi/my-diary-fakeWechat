@@ -13,18 +13,23 @@
 <table>
 <tr>
 <td align="center"><img src="docs/screenshots/timeline.jpg" width="190" alt="时间线"><br><sub>时间线 · 朋友圈式信息流</sub></td>
+<td align="center"><img src="docs/screenshots/location-timeline.jpg" width="190" alt="日记位置"><br><sub>日记位置 · 📍 地点随行显示</sub></td>
 <td align="center"><img src="docs/screenshots/nine-grid.jpg" width="190" alt="九宫格"><br><sub>九宫格配图</sub></td>
-<td align="center"><img src="docs/screenshots/fold-more.jpg" width="190" alt="折叠"><br><sub>正文超 6 行折叠，点「更多」展开</sub></td>
 </tr>
 <tr>
+<td align="center"><img src="docs/screenshots/fold-more.jpg" width="190" alt="折叠"><br><sub>正文超 6 行折叠，点「更多」展开</sub></td>
 <td align="center"><img src="docs/screenshots/photo-viewer.jpg" width="190" alt="大图查看器"><br><sub>大图查看器 · 双指缩放</sub></td>
 <td align="center"><img src="docs/screenshots/gallery.jpg" width="190" alt="相册"><br><sub>相册 · 按月汇总</sub></td>
+</tr>
+<tr>
+<td align="center"><img src="docs/screenshots/cover-custom.jpg" width="190" alt="启动封面"><br><sub>启动封面 · 可自定义背景图</sub></td>
 <td align="center"><img src="docs/screenshots/dark-mode.jpg" width="190" alt="深色模式"><br><sub>深色模式</sub></td>
+<td align="center"><img src="docs/screenshots/settings-dark.png" width="190" alt="我的"><br><sub>我的 · 密码可选 / 备份 / 深色模式</sub></td>
 </tr>
 <tr>
 <td align="center"><img src="docs/screenshots/stats-heatmap.png" width="190" alt="写作热力图"><br><sub>统计 · 年度写作热力图</sub></td>
 <td align="center"><img src="docs/screenshots/stats-rhythm.png" width="190" alt="写作时段"><br><sub>统计 · 一天与一周的写作时段</sub></td>
-<td align="center"><img src="docs/screenshots/settings-dark.png" width="190" alt="我的"><br><sub>我的 · 密码可选 / 备份 / 深色模式</sub></td>
+<td align="center"></td>
 </tr>
 </table>
 
@@ -58,6 +63,8 @@
   <tr><td nowrap style="white-space:nowrap">时间线</td><td>朋友圈式信息流；正文超过 6 行折叠，点「更多」展开（行数按<b>真实视觉行数</b>计算）</td></tr>
   <tr><td nowrap style="white-space:nowrap">年月日筛选</td><td>时间线与相册顶部可<b>逐级下钻：年 → 月 → 日</b>，只列出有记录的日期；没有分支的层级自动省略（只有一年就不摆年份行、某年只有一个月就直接给日期），两个页面各记一份筛选</td></tr>
   <tr><td nowrap style="white-space:nowrap">发日记</td><td>最多 9 张配图，图片自动压缩（最长边 1600px、JPEG 质量 0.82）后入库</td></tr>
+  <tr><td nowrap style="white-space:nowrap">日记位置</td><td>写日记时可定位当前位置：原生 Geolocation 插件取经纬度，再在线反查地名；支持<b>高德 / 腾讯 / 百度</b>三家可选（在「我的」里填自己的 Key），也可手动填写。定位或反查失败不阻断发表，地点随 JSON / 纯文本 / Markdown 备份一起导出，导入时原样恢复</td></tr>
+  <tr><td nowrap style="white-space:nowrap">启动封面</td><td>可给启动封面单独设一张背景图（不与首页封面联动）；遮罩渐变层、标题文字层可分别单独关闭</td></tr>
   <tr><td nowrap style="white-space:nowrap">拍照</td><td>App 内可直接调用相机，照片<b>同时写入手机系统相册</b></td></tr>
   <tr><td nowrap style="white-space:nowrap">语音日记</td><td>可在日记里录一段语音（最多 3 段、每段 5 分钟），时间线上直接点播、拖进度。<b>录音只存本机</b>；导出备份时可选是否打包语音（默认不打包，避免备份文件暴涨）</td></tr>
   <tr><td nowrap style="white-space:nowrap">看大图</td><td>双指捏合 / 滚轮 / 双击缩放；不仅能放大（至 6x），还能<b>缩小到 0.25x</b> 看长图全景，倍数实时显示；放大后可拖动平移，多图可左右滑动翻页</td></tr>
@@ -170,13 +177,13 @@ docs/screenshots/       # README 效果图（由 _verify/docs_shots.mjs 生成�
 
 ## 自动化验证
 
-项目里的功能都有对应的浏览器回归脚本，共 **707 项断言**，不需要真机：
+项目里的功能都有对应的浏览器回归脚本，共 **716 项断言**，不需要真机：
 
 ```bash
 cd _verify
-node e2e_diary.mjs           # 459 项：网页版全量回归（含语音录制/备份链路，需先另开终端 node serve.cjs）
+node e2e_diary.mjs           # 464 项：网页版全量回归（含语音录制/备份链路，需先另开终端 node serve.cjs）
 node verify_close_pin.mjs    #  89 项：密码锁的关闭 / 修改流程
-node native_shell.mjs        #  37 项：注入假原生桥，验证返回键 / 原生导出 / 状态栏
+node native_shell.mjs        #  41 项：注入假原生桥，验证返回键 / 原生导出 / 状态栏
 node verify_zoom_rotate.mjs  #  45 项：照片缩放（含缩小到 0.25x）/ 横屏适配 / 拍照回退
 node file_boot.mjs           #  25 项：file:// 双击 + 存储降级
 node verify_camera.mjs       #  20 项：拍照入草稿（注入假原生桥，跑真机才走的分支）

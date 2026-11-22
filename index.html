@@ -201,7 +201,7 @@ input,textarea{font-family:inherit}
   color:#fff;font-size:18px;font-weight:600;background:linear-gradient(135deg,#4A7A9B,#3B5A73);
 }
 .post-main{flex:1;min-width:0}
-.post-name{font-size:16px;font-weight:500;color:var(--link);line-height:1.2;margin-bottom:5px}
+.post-name{font-size:16px;font-weight:500;color:var(--link);line-height:1.2;margin-bottom:5px;display:flex;align-items:center;flex-wrap:wrap;gap:2px}
 /* 换行由 TextFmt.toHtml() 显式转成的 <br> 负责，这里绝不能再开 pre-wrap ——
    否则源码里的换行符 + <br> 会各渲染一次，行距被翻倍，正文看起来"多空了一行"。
    用 normal 让文本流自己合并空白，只有 <br> 决定换行，各端表现一致。 */
@@ -241,6 +241,20 @@ input,textarea{font-family:inherit}
 }
 .post-more:active{opacity:.55}
 .post-more .dot{width:3px;height:3px;border-radius:50%;background:currentColor}
+
+/* 日记位置 */
+.post-loc{display:inline-flex;align-items:center;gap:4px;font-size:12.5px;color:var(--sub);margin-left:8px}
+.post-loc svg{width:12px;height:12px;flex:none}
+
+/* 发布页位置行 */
+.loc-row{
+  display:flex;align-items:center;gap:8px;width:100%;
+  padding:11px 12px;margin:6px 0;border:.5px solid var(--line);border-radius:10px;
+  background:var(--bg);color:var(--sub);font-size:15px;
+}
+.loc-row:active{background:var(--fill)}
+.loc-row .loc-label{flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.loc-row.has-loc{color:var(--text)}
 
 /* 九宫格图片 */
 .pgrid{display:grid;gap:4px;margin-top:8px}
@@ -388,6 +402,12 @@ input,textarea{font-family:inherit}
   background:var(--bg);color:var(--text);box-sizing:border-box;
   -webkit-appearance:none;appearance:none}
 .dialog-inputs input:focus{outline:none;border-color:var(--green)}
+.dialog-inputs select.dialog-select{
+  width:100%;height:42px;padding:0 12px;font-size:15px;
+  border:.5px solid var(--line);border-radius:8px;
+  background:var(--bg);color:var(--text);box-sizing:border-box;
+  -webkit-appearance:none;appearance:none}
+.dialog-inputs select.dialog-select:focus{outline:none;border-color:var(--green)}
 .dialog-inputs .hint{font-size:12px;color:var(--sub);line-height:1.5;text-align:left}
 /* checkbox 不能套用上面 42px 全宽输入框的样式，单独一条 */
 .dialog-inputs .dialog-check{
@@ -543,6 +563,15 @@ input,textarea{font-family:inherit}
   background:radial-gradient(ellipse 72% 52% at 50% 26%,rgba(120,160,200,.22),transparent 72%),
              radial-gradient(ellipse 66% 46% at 50% 104%,rgba(7,193,96,.13),transparent 72%);
 }
+/* 启动封面自定义背景图（独立存一张，不与首页封面联动） */
+#coverBg{
+  position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;display:none;
+}
+/* 用户选择关闭遮罩：去掉背景二层光晕（::after） */
+#screen-cover.no-overlay::after{display:none}
+/* 用户选择隐藏标题层：整块 inner 文本与页脚文案不显示，只留背景图 + 进度/可点层 */
+#screen-cover.no-title .cover-inner,
+#screen-cover.no-title .cover-foot{display:none}
 .cover-inner{
   position:relative;z-index:2;width:100%;max-width:380px;padding:0 34px;
   display:flex;flex-direction:column;align-items:center;text-align:center;
@@ -977,6 +1006,7 @@ input,textarea{font-family:inherit}
 
   <!-- ============ 1. 封面页：品牌入口 ============ -->
   <section class="screen" id="screen-cover">
+    <img id="coverBg" alt="" draggable="false">
     <div class="cover-inner">
       <div class="cover-mark">
         <svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="#F2F5F8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -1147,6 +1177,10 @@ input,textarea{font-family:inherit}
     </header>
     <div class="composer-body">
       <textarea id="composerText" placeholder="这一刻的想法…" maxlength="2000" rows="1"></textarea>
+      <button class="loc-row" id="btnLocation" type="button">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.1-7-11a7 7 0 1 1 14 0c0 4.9-7 11-7 11z"/><circle cx="12" cy="10" r="2.6"/></svg>
+        <span class="loc-label" id="locLabel">添加位置</span>
+      </button>
       <div class="cgrid" id="composerGrid"></div>
       <div class="audio-block">
         <button class="audio-add" id="btnRecord" type="button">
@@ -1233,6 +1267,21 @@ input,textarea{font-family:inherit}
           <span class="set-label">启动时显示封面页</span>
           <span class="switch" id="switchCover"><i></i></span>
         </button>
+        <div id="coverCustomGroup" style="display:none">
+          <button class="set-row" id="setCoverBg">
+            <span class="set-label">封面背景图</span>
+            <span class="set-value" id="coverBgValue">默认渐变</span>
+            <svg class="set-arrow" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5 7 7.5l-5.5 6"/></svg>
+          </button>
+          <button class="set-row" id="setCoverOverlay">
+            <span class="set-label">保留封面遮罩</span>
+            <span class="switch" id="switchCoverOverlay"><i></i></span>
+          </button>
+          <button class="set-row" id="setCoverTitle">
+            <span class="set-label">显示封面标题文字</span>
+            <span class="switch" id="switchCoverTitle"><i></i></span>
+          </button>
+        </div>
       </div>
 
       <div class="set-group-title">数据（本机存储）</div>
@@ -1245,6 +1294,11 @@ input,textarea{font-family:inherit}
         <button class="set-row" id="setImport">
           <span class="set-label">导入备份</span>
           <span class="set-value">JSON · 文本</span>
+          <svg class="set-arrow" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5 7 7.5l-5.5 6"/></svg>
+        </button>
+        <button class="set-row" id="setMapProvider">
+          <span class="set-label">地图地名服务</span>
+          <span class="set-value" id="mapProviderValue">未填写</span>
           <svg class="set-arrow" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5 7 7.5l-5.5 6"/></svg>
         </button>
       </div>
@@ -1537,6 +1591,250 @@ var Native = (function () {
 
   return { isNative: isNative, platform: plat, plugin: plugin, hasPlugin: hasPlugin, toBase64: toBase64 };
 })();
+
+/* ---------------- 位置：定位 + 反查地名 ---------------- */
+/**
+ * 先取经纬度，再反查成可读地址；两步失败都给出可区分的错误文案。
+ * 反查走 Nominatim（开源地图地名接口），不依赖任何原生插件。
+ */
+var GeoLoc = {
+  /** 浏览器（WebView 网页层）定位兜底 */
+  _webCoords: function () {
+    return new Promise(function (resolve, reject) {
+      if (!navigator.geolocation) {
+        reject(new Error('当前环境不支持定位（浏览器或 WebView 未提供 Geolocation）'));
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(function (pos) {
+        var c = pos.coords || {};
+        resolve({ lat: c.latitude, lng: c.longitude, accuracy: c.accuracy });
+      }, function (err) {
+        var msg;
+        if (err && err.code === err.PERMISSION_DENIED) msg = '定位权限被拒绝：请到系统设置里允许本应用使用位置';
+        else if (err && err.code === err.POSITION_UNAVAILABLE) msg = '暂时无法获取位置信号：请确认手机系统定位已开启，室内或信号弱时可走到窗边再试';
+        else if (err && err.code === err.TIMEOUT) msg = '定位超时（15 秒内未定位到），请检查网络或稍后重试';
+        else msg = '定位失败：' + ((err && err.message) || '未知错误');
+        reject(new Error(msg));
+      }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 });
+    });
+  },
+  /** 原生插件取坐标：先申请权限，再 getCurrentPosition；插件不可用则回退网页定位 */
+  _nativeCoords: function () {
+    var geo = Native.plugin('Geolocation');
+    if (!geo || typeof geo.getCurrentPosition !== 'function') return this._webCoords();
+    var opts = { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 };
+    var ensurePerm = (typeof geo.requestPermissions === 'function')
+      ? geo.requestPermissions({ permissions: ['location'] }).catch(function () {})
+      : Promise.resolve();
+    return ensurePerm.then(function () {
+      return geo.getCurrentPosition(opts);
+    }).then(function (pos) {
+      var c = (pos && pos.coords) || {};
+      if (c.latitude == null || c.longitude == null) throw new Error('定位返回的坐标无效');
+      return { lat: c.latitude, lng: c.longitude, accuracy: c.accuracy };
+    }).catch(function (err) {
+      // 插件侧错误信息尽量转述；拿不到可读文案时落到通用提示
+      var msg = (err && (err.message || err.code)) || '原生定位失败';
+      var low = String(msg).toLowerCase();
+      if (low.indexOf('denied') >= 0) {
+        msg = '定位权限被拒绝：请到系统设置里允许本应用使用位置';
+      } else if (low.indexOf('disabled') >= 0 || low.indexOf('location services') >= 0) {
+        msg = '系统定位服务未开启：请先在手机设置里打开「位置信息 / 定位服务」';
+      } else if (low.indexOf('timeout') >= 0) {
+        msg = '定位超时（15 秒内未定位到），请检查网络或稍后重试';
+      }
+      throw new Error('原生定位：' + msg);
+    });
+  },
+  /** 取当前位置经纬度；原生走 Geolocation 插件，网页/插件缺失回退浏览器定位 */
+  getCoords: function () {
+    return Native.isNative ? this._nativeCoords() : this._webCoords();
+  },
+  /** 带超时的 fetch：避免境外反查接口被墙时一直挂起，到点主动失败 */
+  _fetchTimeout: function (url, ms) {
+    var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, ms);
+    return fetch(url, { headers: { 'Accept': 'application/json' }, signal: ctrl ? ctrl.signal : undefined })
+      .then(function (r) { clearTimeout(timer); return r; })
+      .catch(function (e) { clearTimeout(timer); throw e; });
+  },
+  /** WGS84（手机定位原始坐标）→ GCJ02（高德/腾讯坐标系）。
+   *  超出中国境外直接返回原坐标，避免转换偏移。 */
+  _wgs84ToGcj02: function (lat, lng) {
+    var PI = 3.1415926535897932384626, A = 6378245.0, EE = 0.00669342162296594323;
+    function outOfChina(lat, lng) { return lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271; }
+    function tLat(x, y) {
+      var ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+      ret += (20.0 * Math.sin(6.0 * x * PI) + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0;
+      ret += (20.0 * Math.sin(y * PI) + 40.0 * Math.sin(y / 3.0 * PI)) * 2.0 / 3.0;
+      ret += (160.0 * Math.sin(y / 12.0 * PI) + 320 * Math.sin(y * PI / 30.0)) * 2.0 / 3.0;
+      return ret;
+    }
+    function tLng(x, y) {
+      var ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+      ret += (20.0 * Math.sin(6.0 * x * PI) + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0;
+      ret += (20.0 * Math.sin(x * PI) + 40.0 * Math.sin(x / 3.0 * PI)) * 2.0 / 3.0;
+      ret += (150.0 * Math.sin(x / 12.0 * PI) + 300.0 * Math.sin(x / 30.0 * PI)) * 2.0 / 3.0;
+      return ret;
+    }
+    if (outOfChina(lat, lng)) return { lat: lat, lng: lng };
+    var dLat = tLat(lng - 105.0, lat - 35.0);
+    var dLng = tLng(lng - 105.0, lat - 35.0);
+    var radLat = lat / 180.0 * PI, magic = Math.sin(radLat);
+    magic = 1 - EE * magic * magic;
+    var sqrtMagic = Math.sqrt(magic);
+    dLat = (dLat * 180.0) / ((A * (1 - EE)) / (magic * sqrtMagic) * PI);
+    dLng = (dLng * 180.0) / (A / sqrtMagic * Math.cos(radLat) * PI);
+    return { lat: lat + dLat, lng: lng + dLng };
+  },
+  /** GCJ02 → BD09（百度坐标系） */
+  _gcj02ToBd09: function (lat, lng) {
+    var X_PI = 3.1415926535897932384626 * 3000.0 / 180.0;
+    var z = Math.sqrt(lng * lng + lat * lat) + 0.00002 * Math.sin(lat * X_PI);
+    var theta = Math.atan2(lat, lng) + 0.000003 * Math.cos(lng * X_PI);
+    return { lng: z * Math.cos(theta) + 0.0065, lat: z * Math.sin(theta) + 0.006 };
+  },
+  /** 高德逆地理编码：GCJ02 坐标 → 中文地址 */
+  _amapReverse: function (key, lat, lng) {
+    var gcj = this._wgs84ToGcj02(lat, lng);
+    var url = 'https://restapi.amap.com/v3/geocode/regeo?key=' + encodeURIComponent(key) +
+      '&location=' + encodeURIComponent(gcj.lng.toFixed(6)) + ',' + encodeURIComponent(gcj.lat.toFixed(6)) +
+      '&extensions=base&radius=100&output=JSON';
+    return this._fetchTimeout(url, 6000).then(function (r) {
+      if (!r.ok) throw new Error('高德地名服务返回异常（HTTP ' + r.status + '）');
+      return r.json();
+    }).then(function (data) {
+      if (!data || data.status !== '1') {
+        var code = String(data && (data.infocode || ''));
+        var raw = (data && (data.info || '高德解析失败')) || '高德解析失败';
+        // 把高德常见错误码翻成可操作的大白话
+        if (code === '10009') raw = 'Key 平台类型不符：需在高德控制台把该 Key 的服务平台选为「Web 服务」';
+        else if (code === '10001') raw = 'Key 无效或已失效，请核对后重新填写';
+        else if (code === '10003') raw = '当前 Key 没有开通逆地理编码权限';
+        throw new Error('高德：' + raw);
+      }
+      var rg = data.regeocode || {};
+      var comp = rg.addressComponent || {};
+      function flat(v) { return Array.isArray(v) ? v.join('') : (v || ''); }
+      var parts = [comp.province || '', flat(comp.city), comp.district || ''];
+      parts = parts.map(function (s) { return String(s || '').trim(); });
+      if (comp.street || comp.township) parts.push(comp.street || comp.township);
+      var name = parts.filter(Boolean).join(' · ');
+      return name || rg.formatted_address || '';
+    });
+  },
+  /** 腾讯逆地理编码：GCJ02 坐标 → 中文地址 */
+  _qqReverse: function (key, lat, lng) {
+    var gcj = this._wgs84ToGcj02(lat, lng);
+    var url = 'https://apis.map.qq.com/ws/geocoder/v1/?key=' + encodeURIComponent(key) +
+      '&location=' + encodeURIComponent(gcj.lat.toFixed(6) + ',' + gcj.lng.toFixed(6)) + '&get_poi=0';
+    return this._fetchTimeout(url, 6000).then(function (r) {
+      if (!r.ok) throw new Error('腾讯地名服务返回异常（HTTP ' + r.status + '）');
+      return r.json();
+    }).then(function (data) {
+      if (!data || data.status !== 0) {
+        var msg = (data && (data.message || '腾讯解析失败')) || '腾讯解析失败';
+        throw new Error('腾讯：' + msg);
+      }
+      var res = data.result || {};
+      var comp = res.address_component || {};
+      var parts = [comp.province || '', comp.city || '', comp.district || ''];
+      parts = parts.map(function (s) { return String(s || '').trim(); });
+      if (comp.street) parts.push(comp.street);
+      var name = parts.filter(Boolean).join(' · ');
+      return name || res.address || '';
+    });
+  },
+  /** 百度逆地理编码：BD09 坐标 → 中文地址 */
+  _baiduReverse: function (key, lat, lng) {
+    var gcj = this._wgs84ToGcj02(lat, lng);
+    var bd = this._gcj02ToBd09(gcj.lat, gcj.lng);
+    var url = 'https://api.map.baidu.com/reverse_geocoding/v3/?ak=' + encodeURIComponent(key) +
+      '&output=json&coordtype=bd09ll&location=' + encodeURIComponent(bd.lat.toFixed(6) + ',' + bd.lng.toFixed(6));
+    return this._fetchTimeout(url, 6000).then(function (r) {
+      if (!r.ok) throw new Error('百度地名服务返回异常（HTTP ' + r.status + '）');
+      return r.json();
+    }).then(function (data) {
+      if (!data || data.status !== 0) {
+        var msg = (data && (data.message || '百度解析失败')) || '百度解析失败';
+        throw new Error('百度：' + msg);
+      }
+      var rg = data.result || {};
+      var comp = rg.addressComponent || {};
+      var parts = [comp.province || '', comp.city || '', comp.district || ''];
+      parts = parts.map(function (s) { return String(s || '').trim(); });
+      if (comp.street) parts.push(comp.street);
+      var name = parts.filter(Boolean).join(' · ');
+      return name || rg.formatted_address || '';
+    });
+  },
+  /** Nominatim 兜底（境外 OSM，国内网络可能不通） */
+  _osmReverse: function (lat, lng) {
+    var url = 'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=' +
+      encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lng) + '&accept-language=zh-CN';
+    return this._fetchTimeout(url, 6000).then(function (r) {
+      if (!r.ok) throw new Error('地名服务返回异常（HTTP ' + r.status + '），请稍后重试');
+      return r.json();
+    }).then(function (data) {
+      if (!data || !data.address) throw new Error('未能解析该坐标对应的地址');
+      var a = data.address;
+      var parts = [a.city || a.town || a.village || a.county || a.state || ''];
+      if (a.suburb || a.borough) parts.push(a.suburb || a.borough);
+      if (a.road) parts.push(a.road);
+      var name = parts.filter(Boolean).join(' · ');
+      return name || (data.display_name || '');
+    });
+  },
+  /** 可选地图服务商清单（供设置弹窗选择） */
+  PROVIDERS: [
+    { id: 'amap',  name: '高德地图',  url: 'https://console.amap.com/dev/key/app' },
+    { id: 'qq',    name: '腾讯地图',  url: 'https://lbs.qq.com/dev/console/key/manage' },
+    { id: 'baidu', name: '百度地图',  url: 'https://lbsyun.baidu.com/index.php?title=web服务' }
+  ],
+  /** 各服务商申请 Key 的操作步骤（在设置弹窗里按所选服务商展示） */
+  KEY_STEPS: {
+    amap: [
+      '1. 打开高德开放平台控制台，注册并登录个人开发者账号',
+      '2. 进入「应用管理 → 我的应用」，点「创建新应用」',
+      '3. 在该应用上点「添加 Key」，服务平台务必选「Web 服务」',
+      '4. 提交后复制生成的 Key，粘贴到下方输入框保存'
+    ].join('\n'),
+    qq: [
+      '1. 打开腾讯位置服务控制台，注册并登录',
+      '2. 进入「应用管理 → 我的应用」，点「创建应用」',
+      '3. 在应用下创建 Key，开通 WebServiceAPI（浏览器/Web 端）',
+      '4. 复制生成的 Key，粘贴到下方输入框保存'
+    ].join('\n'),
+    baidu: [
+      '1. 打开百度地图开放平台，注册并登录个人开发者账号',
+      '2. 进入控制台「应用管理 → 我的应用」，创建应用',
+      '3. 服务类型选「服务端」，提交后获取访问密钥（AK）',
+      '4. 复制 AK，粘贴到下方输入框保存'
+    ].join('\n')
+  },
+  /** 经纬度反查地址：按用户选的服务商 + Key 请求；失败再走 Nominatim 兜底 */
+  reverse: function (lat, lng) {
+    var m = (typeof Meta !== 'undefined' && Meta.data) || {};
+    var provider = m.mapProvider || 'amap';
+    var key = (m.mapKey || '').trim();
+    var self = this;
+    var primary = null;
+    if (key) {
+      if (provider === 'qq') primary = this._qqReverse(key, lat, lng);
+      else if (provider === 'baidu') primary = this._baiduReverse(key, lat, lng);
+      else primary = this._amapReverse(key, lat, lng);
+    }
+    var chain = primary
+      ? primary.catch(function (e1) { return self._osmReverse(lat, lng).catch(function () { throw e1; }); })
+      : this._osmReverse(lat, lng);
+    return chain.catch(function (e) {
+      if (e && (e.name === 'AbortError' || /timeout|abort|network|failed to fetch|ERR_/i.test(String(e.message || '')))) {
+        throw new Error('地名解析服务当前网络不可达（6 秒内无响应），可手动填写地点');
+      }
+      throw e;
+    });
+  }
+};
 
 /* ---------------- 原生：系统返回键 ---------------- */
 /**
@@ -2196,7 +2494,12 @@ var DEFAULT_META = {
   pinEnabled: false,
   autoLockSec: 60,
   theme: 'light',
-  showCover: true
+  showCover: true,
+  coverBgId: '',       // 启动封面背景图（独立于首页封面），存图仓库 id；空 = 用默认渐变
+  coverHideOverlay: false,  // 关闭封面原有遮罩渐变层
+  coverHideTitle: false,    // 隐藏封面标题/副标题/统计等文本层
+  mapProvider: 'amap',       // 地名反查服务商：amap / qq / baidu
+  mapKey: ''                // 对应服务商的 Web 服务 Key，空则只用 Nominatim 兜底
 };
 var Meta = {
   data: null,
@@ -2583,6 +2886,7 @@ var State = {
   editingId: null,
   draftImages: [],      // [{id, blob, w, h, url}]
   draftAudios: [],      // [{id, blob, mime, duration(ms), size}]
+  draftLocation: '',    // 本篇日记的位置文字（可定位反查或手填）
   textOnly: false,      // 本次发布只写文字（长按时间线相机进来的），不显示配图入口
   viewerList: [],
   viewerIndex: 0,
@@ -2667,6 +2971,15 @@ function renderProfile() {
   $('#pinRowLabel').textContent = pinOn ? '修改密码' : '打开密码';
   $('#pinStateText').textContent = pinOn ? '已设置' : '未设置';
   $('#switchLock').classList.toggle('on', pinOn);
+  // 封面开关 + 其下自定义组：只有开启「启动时显示封面页」才展示背景图/遮罩/标题设置
+  var coverOn = m.showCover !== false;
+  $('#switchCover').classList.toggle('on', coverOn);
+  $('#coverCustomGroup').style.display = coverOn ? '' : 'none';
+  $('#switchCoverOverlay').classList.toggle('on', m.coverHideOverlay !== true);
+  $('#switchCoverTitle').classList.toggle('on', m.coverHideTitle !== true);
+  $('#coverBgValue').textContent = m.coverBgId ? '已自定义' : '默认渐变';
+  var provName = (GeoLoc.PROVIDERS.filter(function (p) { return p.id === m.mapProvider; })[0] || {}).name || '高德地图';
+  $('#mapProviderValue').textContent = m.mapKey ? (provName + ' · 已填写') : '未填写（用兜底接口）';
   // 开关旁边补一句大白话：一眼知道"现在到底是谁在管着打开的动作"。
   // 尤其"关掉了但密码还留着"这种状态，不写清就会让人以为没关掉。
   $('#pinSwitchHint').textContent = pinOn ? '已开启'
@@ -3040,7 +3353,9 @@ function renderTimeline() {
       '<article class="post" data-id="' + e.id + '">' +
         postAvatarHtml() +
         '<div class="post-main">' +
-          '<div class="post-name">' + escapeHtml(Meta.data.nickname || '我') + '</div>' +
+          '<div class="post-name">' + escapeHtml(Meta.data.nickname || '我') +
+            (e.location ? '<span class="post-loc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.1-7-11a7 7 0 1 1 14 0c0 4.9-7 11-7 11z"/><circle cx="12" cy="10" r="2.6"/></svg>' + escapeHtml(e.location) + '</span>' : '') +
+          '</div>' +
           textHtml +
           gridHtml +
           audioHtml +
@@ -3260,10 +3575,25 @@ function renderCoverMeta() {
 /** 封面停留时长：够看清文字，又不至于让人觉得卡住 */
 var COVER_HOLD_MS = 1800;
 var coverTimer = null, coverEntered = false;
+/** 启动封面背景：独立存一张图（id 不同于首页封面 'cover'），无图则隐藏图层 */
+function renderCoverBg() {
+  var img = $('#coverBg');
+  var id = Meta.data.coverBgId;
+  if (!id) { img.style.display = 'none'; img.removeAttribute('src'); return; }
+  imageURL(id).then(function (url) {
+    if (!url) { img.style.display = 'none'; return; }
+    img.src = url;
+    img.style.display = 'block';
+  });
+}
 function showCover() {
   renderCoverMeta();
+  renderCoverBg();
+  var el = $('#screen-cover');
+  el.classList.toggle('no-overlay', Meta.data.coverHideOverlay === true);
+  el.classList.toggle('no-title', Meta.data.coverHideTitle === true);
   coverEntered = false;
-  $('#screen-cover').classList.add('show');
+  el.classList.add('show');
   $('#coverProgress').classList.remove('run');
   // 重启动画：先移除 class 并强制回流，否则连着进两次不会重新播
   void $('#coverProgress').offsetWidth;
@@ -4214,7 +4544,7 @@ function openSheet(items) {
  * 导出路径先按平台给静态兜底，原生端再用 Filesystem.getUri() 取真实目录校正。
  */
 /* 网页兜底版本：原生包以 App.getInfo() 读到的 versionName 为准，这里只是读不到插件时的退路 */
-var APP_FALLBACK_VERSION = '2.9.1';
+var APP_FALLBACK_VERSION = '2.10';
 
 function openInfoDialog() {
   var APP_ID = 'com.chenchang.diary';
@@ -4309,6 +4639,14 @@ function openDialog(opts) {
         (it.checked ? ' checked' : '') + '>' +
         '<span>' + escapeHtml(it.label || '') + '</span></label>';
     }
+    // select 下拉：options 为 [{value,label}]，value 回传选中项 value
+    if (it.type === 'select') {
+      var opts = (it.options || []).map(function (o) {
+        return '<option value="' + escapeHtml(o.value) + '"' + (o.value === it.value ? ' selected' : '') + '>' +
+          escapeHtml(o.label) + '</option>';
+      }).join('');
+      return '<select class="dialog-select">' + opts + '</select>';
+    }
     return '<input type="' + (it.type || 'text') + '"' +
       (it.placeholder ? ' placeholder="' + escapeHtml(it.placeholder) + '"' : '') +
       (it.autocomplete ? ' autocomplete="' + it.autocomplete + '"' : '') +
@@ -4317,7 +4655,7 @@ function openDialog(opts) {
     (opts.hint ? '<div class="hint">' + escapeHtml(opts.hint) + '</div>' : '');
   ibox.style.display = (inputs.length || opts.hint) ? '' : 'none';
 
-  var btns = opts.buttons || [{ label: '知道了' }];
+  var btns = (opts.buttons || [{ label: '知道了' }]).filter(function (b) { return b && String(b.label).trim() !== ''; });
   var box = $('#dialogBtns');
   box.innerHTML = btns.map(function (b, i) {
     return '<button class="' + (b.style || '') + '" data-i="' + i + '">' + escapeHtml(b.label) + '</button>';
@@ -4330,11 +4668,13 @@ function openDialog(opts) {
     var idx = Number(btn.getAttribute('data-i'));
     // 把输入框的值一并交给 onClick；checkbox 回传 checked，password/text 回传 value。
     // 没传 inputs 时 vals 是空数组，兼容所有旧调用。
-    var vals = [].map.call(ibox.querySelectorAll('input'), function (el) {
+    var vals = [].map.call(ibox.querySelectorAll('input,select'), function (el) {
       return el.type === 'checkbox' ? el.checked : el.value;
     });
-    closeMask();
-    if (btns[idx] && btns[idx].onClick) btns[idx].onClick(vals);
+    var cfg = btns[idx] || {};
+    // keepOpen：异步操作按钮（如「定位当前位置」）不关闭弹窗，结果回填在当前弹窗里
+    if (!cfg.keepOpen) closeMask();
+    if (cfg.onClick) cfg.onClick(vals);
   };
   requestAnimationFrame(function () { $('#mask').classList.add('show'); });
 }
@@ -4357,6 +4697,7 @@ function openComposer(entry, opts) {
   opts = opts || {};
   State.editingId = entry ? entry.id : null;
   State.draftImages = [];
+  State.draftLocation = entry ? (entry.location || '') : '';
   // 编辑已有日记时一律允许配图（那篇本来可能就有图）
   State.textOnly = !!opts.textOnly && !entry;
   $('#composerTitle').textContent = entry ? '编辑日记' : (State.textOnly ? '写文字' : '写日记');
@@ -4397,9 +4738,92 @@ function openComposer(entry, opts) {
   }
   Promise.all([job, audioJob]).then(function () {
     renderComposerGrid();
+    renderLocationRow();
     showScreen('#screen-composer');
     setTimeout(function () { if (!entry) $('#composerText').focus(); }, 320);
   });
+}
+/** 发布页位置行：有值显示位置文字，无值显示「添加位置」 */
+function renderLocationRow() {
+  var row = $('#btnLocation');
+  var label = $('#locLabel');
+  var loc = (State.draftLocation || '').trim();
+  label.textContent = loc || '添加位置';
+  row.classList.toggle('has-loc', !!loc);
+}
+/**
+ * 位置弹窗：可点「定位当前位置」自动反查，也可手动输入；定位/反查失败
+ * 把错在哪一步讲清楚，但不阻断保存，用户仍能手填或留空。
+ */
+function openLocationDialog() {
+  var current = (State.draftLocation || '').trim();
+  var locating = false;
+  var hintEl = null, inputEl = null;
+
+  function locate() {
+    if (locating) return;
+    locating = true;
+    // 每次定位前重新取元素：避免弹窗重建 / 元素被替换后回调写到空引用上
+    inputEl = $('#dialogInputs input');
+    hintEl = $('#dialogInputs .hint');
+    if (inputEl) inputEl.disabled = true;
+    var coords = null;
+    // 秒数计时：坐标获取阶段在界面上显示「正在获取… 已用 X 秒」
+    var secs = 0, timer = null;
+    function tick() {
+      secs += 1;
+      if (hintEl && !coords) hintEl.textContent = '正在获取定位… 已用 ' + secs + ' 秒';
+    }
+    if (hintEl) hintEl.textContent = '正在获取定位… 已用 0 秒';
+    timer = setInterval(tick, 1000);
+
+    function stopTimer() { if (timer) { clearInterval(timer); timer = null; } }
+
+    GeoLoc.getCoords().then(function (c) {
+      coords = c;
+      stopTimer();
+      // 坐标先落地：哪怕后面地名解析不通，位置也已经确定，不再「转圈后什么都没有」
+      var coordText = coords.lat.toFixed(5) + ', ' + coords.lng.toFixed(5);
+      if (inputEl) inputEl.value = coordText;
+      var acc = coords.accuracy != null ? '（精度约 ±' + Math.round(coords.accuracy) + ' 米）' : '';
+      if (hintEl) hintEl.textContent = '已获取坐标' + acc + '，正在解析地名…';
+      return GeoLoc.reverse(coords.lat, coords.lng).then(function (name) {
+        if (!name) throw new Error('未能解析该坐标对应的地址');
+        if (inputEl) inputEl.value = name;
+        if (hintEl) hintEl.textContent = '已定位到：' + name + acc;
+      });
+    }).catch(function (err) {
+      stopTimer();
+      // 区分失败发生在哪一步：定位（取坐标）失败 vs 反查（坐标转地名）失败
+      var stage = coords ? '地名解析失败' : '定位失败';
+      var base = (err && err.message) || '未知错误';
+      if (!coords && inputEl) inputEl.value = '';
+      if (hintEl) hintEl.textContent = '⚠ ' + stage + '：' + base + '。你可以手动填写地点。';
+    }).then(function () {
+      stopTimer();
+      locating = false;
+      if (inputEl) inputEl.disabled = false;
+    });
+  }
+
+  openDialog({
+    title: '位置',
+    inputs: [{ type: 'text', placeholder: '输入或修改地点', value: current }],
+    hint: '定位前请先在手机系统设置里开启「位置信息 / 定位服务」，并允许本应用使用位置；也可以直接手动填写地点，不需要可留空。',
+    buttons: [
+      { label: '定位当前位置', keepOpen: true, onClick: locate },
+      { label: '清空', onClick: function () {
+        State.draftLocation = '';
+        renderLocationRow();
+      } },
+      { label: '保存', style: 'primary', onClick: function (vals) {
+        State.draftLocation = (vals[0] || '').trim();
+        renderLocationRow();
+      } }
+    ]
+  });
+  inputEl = $('#dialogInputs input');
+  hintEl = $('#dialogInputs .hint');
 }
 function renderComposerGrid() {
   var grid = $('#composerGrid');
@@ -4510,9 +4934,10 @@ function publish() {
   var text = TextFmt.normalize($('#composerText').value).trim();
   var imgs = State.draftImages;
   var audios = State.draftAudios || [];
+  var location = (State.draftLocation || '').trim();
   if (!text && !imgs.length && !audios.length) { toast('写点什么再发表吧'); return; }
   $('#btnPublish').disabled = true;
-  publishCore(text, imgs, audios).catch(function (err) {
+  publishCore(text, imgs, audios, location).catch(function (err) {
     console.error(err);
     $('#btnPublish').disabled = false;
     toast('保存失败：' + (err && err.message === 'quota' ? '本地存储空间已满' : (err && err.message) || '未知错误'));
@@ -4522,8 +4947,10 @@ function publish() {
  * 发表的核心：与输入框解耦，接收已经整理好的文本与图片。
  * 抽出来是为了让回归测试能直接投递长文本（验证折叠），不必去驱动 textarea。
  */
-function publishCore(text, imgs, audios) {
+function publishCore(text, imgs, audios, location) {
   if (audios === undefined) audios = State.draftAudios || [];
+  if (location === undefined) location = State.draftLocation || '';
+  location = (location || '').trim();
   var entryId = State.editingId || uid();
   var now = Date.now();
   var keepIds = imgs.map(function (it) { return it.id; });
@@ -4561,6 +4988,7 @@ function publishCore(text, imgs, audios) {
         text: text,
         images: keepIds,
         audios: keepAudioIds,
+        location: location || '',
         createdAt: (old && old.createdAt) ? old.createdAt : now,
         updatedAt: old ? now : 0
       };
@@ -4569,6 +4997,7 @@ function publishCore(text, imgs, audios) {
       State.editingId = null;
       State.draftImages = [];
       State.draftAudios = [];
+      State.draftLocation = '';
       // 这篇的时间如果落在当前筛选之外（比如正筛着 9 月、现在发的是 10 月），
       // 就把筛选放开 —— 否则发表后切回时间线看不到它，像是没发出去
       ensureVisibleInFilter((old && old.createdAt) ? old.createdAt : now);
@@ -4746,12 +5175,15 @@ function buildTextBackup(entries, fmt) {
   list.forEach(function (e, i) {
     var body = TextFmt.normalize(e.text || '');
     var nImg = (e.images || []).length;
+    var loc = (e.location || '').trim();
     if (md) {
       out.push('---', '', '## ' + TimeFmt.full(e.createdAt), '');
+      if (loc) out.push('📍 ' + loc, '');
       if (body) out.push(body, '');
       if (nImg) out.push('*（附 ' + nImg + ' 张图片）*', '');
     } else {
       out.push('———————— 第 ' + (i + 1) + ' 篇 · ' + TimeFmt.full(e.createdAt) + ' ————————', '');
+      if (loc) out.push('📍 ' + loc, '');
       if (body) out.push(body, '');
       if (nImg) out.push('（附 ' + nImg + ' 张图片）', '');
     }
@@ -5085,6 +5517,16 @@ function parseTextBackup(text, fmt) {
     return s.replace(/^\s*\*?（附\s*\d+\s*张图片）\*?\s*$/gm, '')
       .replace(/^\n+/, '').replace(/\n+$/, '');
   };
+  // 抽出地点行（📍 开头），剩下的才是正文
+  var splitLoc = function (raw) {
+    var loc = '';
+    var rest = raw.split('\n').filter(function (ln) {
+      var m = ln.match(/^\s*📍\s*(.+?)\s*$/);
+      if (m && !loc) { loc = m[1]; return false; }
+      return true;
+    }).join('\n');
+    return { loc: loc, body: stripNote(rest) };
+  };
   var toTs = function (s) {
     var m = String(s).match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
     if (!m) return 0;
@@ -5092,17 +5534,18 @@ function parseTextBackup(text, fmt) {
   };
 
   if (!heads.length) {
-    var only = stripNote(lines.join('\n').replace(/^\s*-{3,}\s*$/gm, ''));
-    return only.trim() ? [{ text: only, createdAt: Date.now() }] : [];
+    var one = splitLoc(lines.join('\n').replace(/^\s*-{3,}\s*$/gm, ''));
+    return one.body.trim() ? [{ text: one.body, location: one.loc, createdAt: Date.now() }] : [];
   }
   var out = [];
   heads.forEach(function (h, k) {
     var end = (k + 1 < heads.length) ? heads[k + 1] : lines.length;
-    var body = stripNote(lines.slice(h + 1, end).join('\n').replace(/^\s*-{3,}\s*$/gm, ''));
-    if (!body.trim()) return;
+    var raw = lines.slice(h + 1, end).join('\n').replace(/^\s*-{3,}\s*$/gm, '');
+    var one = splitLoc(raw);
+    if (!one.body.trim()) return;
     // 日期就在头部行里（两种格式都是），解析不出就用当前时间
     var ts = toTs(lines[h]);
-    out.push({ text: body, createdAt: ts || Date.now() });
+    out.push({ text: one.body, location: one.loc, createdAt: ts || Date.now() });
   });
   return out;
 }
@@ -5132,6 +5575,7 @@ function doImportText(entries) {
         id: uid(),
         text: e.text || '',
         images: [],
+        location: e.location || '',
         createdAt: e.createdAt || Date.now(),
         updatedAt: 0
       }).then(function () { count++; });
@@ -5177,6 +5621,7 @@ function doImport(data) {
           text: e.text || '',
           images: ids,
           audios: audioIds,
+          location: e.location || '',
           createdAt: e.createdAt || Date.now(),
           updatedAt: e.updatedAt || 0
         });
@@ -5629,6 +6074,7 @@ function bindEvents() {
     }
   });
   $('#btnPublish').addEventListener('click', publish);
+  $('#btnLocation').addEventListener('click', openLocationDialog);
 
   /* --- 语音：录音按钮 + 全局委托（发布页草稿与时间线共用一套 DOM 约定） --- */
   $('#btnRecord').addEventListener('click', function () {
@@ -5743,6 +6189,53 @@ function bindEvents() {
     renderSettings();
     toast(next ? '下次打开会先显示封面页' : '已关闭封面页，打开直接进首页');
   });
+  /* 启动封面背景图：独立存一张（id 'coverbg'），不与首页封面 'cover' 联动 */
+  $('#setCoverBg').addEventListener('click', function () {
+    var has = !!Meta.data.coverBgId;
+    var buttons = [{ label: '取消' }];
+    // 只有已经设过自定义图，才给「恢复默认渐变」；没设过时不摆空按钮
+    if (has) {
+      buttons.push({ label: '恢复默认渐变', onClick: function () {
+        var old = Meta.data.coverBgId;
+        Meta.save({ coverBgId: '' });
+        if (old) Store.deleteImage(old).catch(function () {});
+        urlCache.delete(old);
+        renderSettings();
+        toast('已恢复默认渐变');
+      } });
+    }
+    buttons.push({ label: '选择图片', style: 'primary', onClick: function () {
+      pickSingle(function (file) {
+        ImageProc.compress(file).then(function (r) {
+          var id = 'coverbg';
+          var old = Meta.data.coverBgId;
+          return Store.putImage({ id: id, entryId: '__profile__', w: r.w, h: r.h, size: r.blob.size, blob: r.blob })
+            .then(function () {
+              if (old && old !== id) Store.deleteImage(old).catch(function () {});
+              urlCache.delete(id);
+              Meta.save({ coverBgId: id });
+              renderSettings();
+              toast('封面背景图已更新');
+            });
+        }).catch(function () { toast('图片处理失败，请换一张试试'); });
+      });
+    } });
+    openDialog({
+      title: '封面背景图',
+      text: has ? '当前已使用自定义背景图。\n可更换为新图片，或恢复默认渐变。' : '选择一张图片作为启动封面的背景，图片仅保存在本机。',
+      buttons: buttons
+    });
+  });
+  /* 遮罩开关：on = 保留原有遮罩渐变；off = 去掉遮罩（coverHideOverlay=true） */
+  $('#setCoverOverlay').addEventListener('click', function () {
+    Meta.save({ coverHideOverlay: Meta.data.coverHideOverlay !== true ? true : false });
+    renderSettings();
+  });
+  /* 标题开关：on = 显示标题文字；off = 隐藏标题/副标题/统计（coverHideTitle=true） */
+  $('#setCoverTitle').addEventListener('click', function () {
+    Meta.save({ coverHideTitle: Meta.data.coverHideTitle !== true ? true : false });
+    renderSettings();
+  });
   /* 「打开时验证密码」开关：只负责"开 / 关验证"这一件事。
      关掉它 ≠ 关闭密码（密码还留着，下次输一次就能开回来）——
      真正要删掉密码走下面那条独立的「关闭密码」。 */
@@ -5807,6 +6300,46 @@ function bindEvents() {
   });
   $('#setExport').addEventListener('click', pickExportFormat);
   $('#setImport').addEventListener('click', pickImportFormat);
+  /* 地图地名服务：可选高德/腾讯/百度，填对应 Web 服务 Key；留空则只用开源兜底接口 */
+  $('#setMapProvider').addEventListener('click', function () {
+    var curProv = Meta.data.mapProvider || 'amap';
+    var stepText = GeoLoc.KEY_STEPS[curProv] || GeoLoc.KEY_STEPS.amap;
+    var provMeta = GeoLoc.PROVIDERS.filter(function (p) { return p.id === curProv; })[0] || {};
+    openDialog({
+      title: '地图地名服务',
+      html: true,
+      text: '选定一家地图服务商并填入它的「Web 服务」Key，把定位坐标解析成中文地名。\n\n<b>申请步骤（' + provMeta.name + '）：</b>\n' + stepText,
+      hint: 'Key 仅保存在本机，不会上传；不填则自动改用开源地名接口（国内可能较慢）。',
+      inputs: [
+        { type: 'select', value: curProv, options: GeoLoc.PROVIDERS.map(function (p) { return { value: p.id, label: p.name }; }) },
+        { type: 'text', placeholder: '粘贴对应服务商的 Web 服务 Key', value: Meta.data.mapKey || '' }
+      ],
+      buttons: [
+        { label: '取消' },
+        {
+          label: '保存', style: 'primary', onClick: function (vals) {
+            var prov = vals[0] || curProv;
+            var v = (vals[1] || '').trim();
+            Meta.save({ mapProvider: prov, mapKey: v });
+            renderSettings();
+            toast(v ? '已保存地图地名服务' : '已清空地图 Key，改用兜底地名接口');
+          }
+        }
+      ]
+    });
+    // 切换服务商时，步骤说明跟着换成对应平台的申请流程
+    var sel = $('#dialogInputs select');
+    var dt = $('#dialogText');
+    if (sel && dt) {
+      sel.addEventListener('change', function () {
+        var pid = sel.value;
+        var pm = GeoLoc.PROVIDERS.filter(function (p) { return p.id === pid; })[0] || {};
+        var st = GeoLoc.KEY_STEPS[pid] || GeoLoc.KEY_STEPS.amap;
+        dt.innerHTML = TextFmt.toHtml('选定一家地图服务商并填入它的「Web 服务」Key，把定位坐标解析成中文地名。\n\n<b>申请步骤（' + (pm.name || '') + '）：</b>\n' + st)
+          .replace(/&lt;b&gt;/g, '<b>').replace(/&lt;\/b&gt;/g, '</b>');
+      });
+    }
+  });
   $('#setInfo').addEventListener('click', openInfoDialog);
   $('#fileImport').addEventListener('change', function () {
     if (this.files && this.files[0]) importBackup(this.files[0], pendingImportFormat);
@@ -6224,6 +6757,7 @@ function showDetail(e) {
   if (imgN) meta.push('共 ' + imgN + ' 张图片');
   if (audN) meta.push('共 ' + audN + ' 段语音');
   meta.push('字数 ' + (e.text ? e.text.length : 0) + ' 字');
+  if (e.location) meta.push('📍 ' + e.location);
 
   var body = e.text ? TextFmt.normalize(e.text)
     : (imgN && audN ? '（这篇只有图片和语音）' : imgN ? '（这篇只有图片）'
@@ -6300,6 +6834,7 @@ window.__diary__ = {
   openComposer: openComposer, renderComposerGrid: renderComposerGrid, addImages: addImages,
   openCameraSheet: openCameraSheet, bindCameraButton: bindCameraButton,
   pickImages: pickImages, pickCamera: pickCamera,
+  GeoLoc: GeoLoc, openLocationDialog: openLocationDialog,
   CAMERA_LONG_MS: CAMERA_LONG_MS, COVER_BASE_H: COVER_BASE_H,
   /**
    * 测试专用：不走输入框，直接以纯文本发一篇**新**日记。

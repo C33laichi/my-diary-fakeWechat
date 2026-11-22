@@ -46,6 +46,11 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
+    <!-- 日记位置：WebView 的 Geolocation 需要定位权限；首次定位由系统弹窗询问。
+         先用粗定位即可满足反查城市/区县，精定位作为补充声明。 -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
     <!-- 「拍摄」要把照片同时写进手机系统相册（@capacitor/camera 的 saveToGallery）。
          插件官方说明：除了 saveToGallery 以外它不需要任何权限，所以这两条只在
          需要它们的系统版本上申请，避免在新系统上白要权限：

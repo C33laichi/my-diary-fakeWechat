@@ -379,6 +379,22 @@ try {
   await cdp.send('Input.insertText', { text: TEXT });
   await sleep(200);
   check('正文已输入', (await cdp.evalJs(`document.getElementById('composerText').value`)).length > 10);
+
+  console.log('\n[4b] 位置弹窗：点定位后弹窗保持打开、坐标回填（不被自动关闭）');
+  await cdp.evalJs(`window.__diary__.openLocationDialog()`);
+  check('位置弹窗已打开', await cdp.evalJs(`document.getElementById('dialog').style.display !== 'none'`));
+  // 桩掉坐标获取，避免无头 Chrome 无定位权限；反查在网页环境走 OSM 会超时，不影响本路径断言
+  await cdp.evalJs(`window.__diary__.GeoLoc.getCoords = function () { return Promise.resolve({ lat: 28.194, lng: 112.982, accuracy: 35 }) }`);
+  // 桩掉反查：无头环境无 Key、OSM 兜底被墙，真实发请求只会产生网络错误，不影响本路径断言
+  await cdp.evalJs(`window.__diary__.GeoLoc.reverse = function () { return Promise.resolve('湖南省长沙市芙蓉区测试路 1 号') }`);
+  await cdp.clickDialog('定位当前位置');
+  await sleep(400);
+  check('点定位后弹窗仍保持打开（未自动关闭）',
+    await cdp.evalJs(`document.getElementById('dialog').style.display !== 'none'`));
+  const locInput = await cdp.evalJs(`document.querySelector('#dialogInputs input').value`);
+  check('反查地名已回填进位置输入框', /长沙|测试路/.test(locInput), `value="${locInput}"`);
+  await cdp.evalJs(`window.__diary__.closeMask()`);
+
   await cdp.setFiles('#filePicker', [testImg]);
   await sleep(1800);
   check('图片加入草稿网格', await cdp.evalJs(`document.querySelectorAll('#composerGrid .cell img').length`) === 1);
@@ -1636,6 +1652,13 @@ try {
   const noted = await cdp.evalJs(`window.__diary__.parseTextBackup(${JSON.stringify('———————— 第 1 篇 · 2026-09-17 15:30 ————————\n\n正文甲。\n\n（附 3 张图片）\n')}, 'txt')`);
   check('txt 里的图片张数提示不会被当成正文',
     noted.length === 1 && noted[0].text === '正文甲。', JSON.stringify(noted));
+  // 地点行随纯文本导出，并能被解析回 location（不混进正文）
+  const locOut = await cdp.evalJs(`window.__diary__.buildTextBackup([{ text: '正文乙。', location: '湖南省长沙市芙蓉区测试路 1 号', createdAt: 1726554600000 }], 'txt')`);
+  check('纯文本导出带 📍 地点行', /📍 湖南省长沙市芙蓉区测试路 1 号/.test(locOut));
+  const locRound = await cdp.evalJs(`window.__diary__.parseTextBackup(${JSON.stringify(locOut)}, 'txt')`);
+  check('往返后地点写入 location、不进正文',
+    locRound.length === 1 && locRound[0].location === '湖南省长沙市芙蓉区测试路 1 号' && locRound[0].text === '正文乙。',
+    JSON.stringify(locRound));
   // 导入也有格式选择面板
   await cdp.evalJs(`window.__diary__.pickImportFormat()`);
   await sleep(400);

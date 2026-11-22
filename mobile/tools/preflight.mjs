@@ -178,7 +178,7 @@ if (!html) {
   else warn('没找到 `if (!Native.isNative) return` 短路写法，请确认原生分支在浏览器里不会执行');
 
   // 用到的原生插件是否真的被调用
-  const plugins = ['App', 'Camera', 'Filesystem', 'Share', 'StatusBar'];
+  const plugins = ['App', 'Camera', 'Filesystem', 'Share', 'StatusBar', 'Geolocation'];
   const missing = plugins.filter((p) => !html.includes("plugin('" + p + "')"));
   if (missing.length) bad('index.html 里没有调用这些插件：' + missing.join(' / '));
   else ok(plugins.length + ' 个原生插件在 index.html 里都有调用点');
@@ -340,6 +340,7 @@ const PLUGINS = [
   ['@capacitor/filesystem', '写备份文件'],
   ['@capacitor/share', '系统分享面板'],
   ['@capacitor/status-bar', '状态栏主题'],
+  ['@capacitor/geolocation', '日记位置定位'],
 ];
 
 const pluginsJson = read(path.join(MAIN, 'assets', 'capacitor.plugins.json'));

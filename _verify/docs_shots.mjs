@@ -208,6 +208,7 @@ try {
 
     // 越靠前越新：时间线从上往下就按这个顺序
     // 前几篇刻意落在连续的几天里，首页的「连续记录」才不是 1 天
+    // 末位字段：配图数；location 单独在下面挑几篇补上（展示 📍 地点行）
     const rows = [
       [0, 9, 12, '早上醒来还有点困，泡了杯咖啡，把今天的待办写在便签上。窗外的天亮得很慢。', 1],
       [1, 21, 14, '晚上整理书架，翻到三年前买的《夜航西飞》。扉页上还留着一行小字：慢一点也没关系。窗外起风了，泡了杯热茶，把最后两章重读了一遍。', 1],
@@ -251,6 +252,8 @@ try {
       rows.push([daysAgo, 8 + (i * 3) % 13, (i * 7) % 60, fillerTexts[i % fillerTexts.length], i % 6 === 2 ? 1 : 0]);
     });
 
+    // 挑前几篇带上地点，时间线昵称行右侧会出现 📍 地点
+    const locs = ['湖南省长沙市芙蓉区文艺路街道', '湖南省长沙市岳麓区橘子洲', '湖南省长沙市天心区湘江中路', '', ''];
     for (let i = 0; i < rows.length; i++) {
       const [daysAgo, hh, mm, text, n] = rows[i];
       const id = 'demo-' + i;
@@ -265,7 +268,7 @@ try {
         await S.putImage({ id: pid, entryId: id, w: w, h: h, size: blob.size, blob: blob });
         imgs.push(pid);
       }
-      await S.saveEntry({ id: id, text: text, images: imgs, createdAt: at(daysAgo, hh, mm), updatedAt: 0 });
+      await S.saveEntry({ id: id, text: text, images: imgs, location: locs[i] || '', createdAt: at(daysAgo, hh, mm), updatedAt: 0 });
     }
 
     D.Meta.save({ nickname: '我', sign: '把日子写成一行行字，只有自己看得到。' });
@@ -295,6 +298,11 @@ try {
   await cdp.evalJs(`(() => { const s = document.querySelector('#screen-timeline .scroll'); if (s) s.scrollTop = 0; return true; })()`);
   await sleep(800);
   await cdp.snap('timeline.jpg', T.phone[0], T.phone[1]);
+
+  // 1b) 带地点的时间线：昵称行右侧出现 📍 地点（前几篇示例数据已带 location）
+  await cdp.evalJs(`(() => { const s = document.querySelector('#screen-timeline .scroll'); if (s) s.scrollTop = 0; return true; })()`);
+  await sleep(600);
+  await cdp.snap('location-timeline.jpg', T.phone[0], T.phone[1]);
 
   // 2) 相册：同样选中最新月份
   await cdp.evalJs(`window.__diary__.switchTab('gallery')`);
@@ -409,6 +417,31 @@ try {
   await cdp.evalJs(`window.__diary__.switchTab('home')`);
   await sleep(800);
   await cdp.snap('desktop-1280.png', null, null, { format: 'png' });
+
+  // 12) 启动封面：自定义背景图（独立于首页封面），保留遮罩与标题层
+  await cdp.viewport(390, 844, true, 2);
+  await cdp.evalJs(`(async () => {
+    const D = window.__diary__;
+    const cv = document.createElement('canvas');
+    cv.width = 720; cv.height = 1280;
+    const x = cv.getContext('2d');
+    const g = x.createLinearGradient(0, 0, 720, 1280);
+    g.addColorStop(0, '#2C5364'); g.addColorStop(0.55, '#203A43'); g.addColorStop(1, '#0F2027');
+    x.fillStyle = g; x.fillRect(0, 0, 720, 1280);
+    const rg = x.createRadialGradient(540, 260, 20, 540, 260, 520);
+    rg.addColorStop(0, 'rgba(255,255,255,.28)'); rg.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = rg; x.fillRect(0, 0, 720, 1280);
+    const blob = await new Promise((res) => cv.toBlob(res, 'image/jpeg', 0.86));
+    await D.Store.putImage({ id: 'coverbg', entryId: '__profile__', w: 720, h: 1280, size: blob.size, blob: blob });
+    D.Meta.save({ coverBgId: 'coverbg', coverHideOverlay: false, coverHideTitle: false });
+    return true;
+  })()`);
+  await cdp.evalJs(`window.__diaryNoAutoCover = true`);
+  await cdp.evalJs(`window.__diary__.showCover()`);
+  await sleep(900);
+  await cdp.snap('cover-custom.jpg', T.phone[0], T.phone[1]);
+  await cdp.evalJs(`window.__diaryNoAutoCover = false`);
+  await cdp.evalJs(`window.__diary__.enterApp()`);
 
   console.log('\n完成：docs/screenshots 已更新');
 } catch (e) {

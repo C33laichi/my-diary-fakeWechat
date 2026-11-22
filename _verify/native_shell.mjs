@@ -57,7 +57,7 @@ window.__nativeCalls = [];
         return { remove: function () {} };
       },
       exitApp: function () { rec('App', 'exitApp', []); return Promise.resolve(); },
-      getInfo: function () { rec('App', 'getInfo', []); return Promise.resolve({ name: '我的日记', id: 'com.chenchang.diary', version: '2.9.1', build: '14' }); }
+      getInfo: function () { rec('App', 'getInfo', []); return Promise.resolve({ name: '我的日记', id: 'com.chenchang.diary', version: '2.10', build: '15' }); }
     },
     Filesystem: {
       writeFile: function (o) {
@@ -79,6 +79,11 @@ window.__nativeCalls = [];
     StatusBar: {
       setStyle: function (o) { rec('StatusBar', 'setStyle', [o]); return Promise.resolve(); },
       setBackgroundColor: function (o) { rec('StatusBar', 'setBackgroundColor', [o]); return Promise.resolve(); }
+    },
+    Geolocation: {
+      requestPermissions: function (o) { rec('Geolocation', 'requestPermissions', [o]); return Promise.resolve({ location: 'granted', coarseLocation: 'granted' }); },
+      getCurrentPosition: function (o) { rec('Geolocation', 'getCurrentPosition', [o]);
+        return Promise.resolve({ timestamp: Date.now(), coords: { latitude: 28.194, longitude: 112.982, accuracy: 35 } }); }
     }
   };
   window.Capacitor = {
@@ -368,7 +373,7 @@ try {
   const infoText = await ev(`document.getElementById('dialogText').textContent`);
   check('原生端调用了 App.getInfo', await callCount('App', 'getInfo') === 1);
   check('原生端调用了 Filesystem.getUri 取真实备份目录', await callCount('Filesystem', 'getUri') === 1);
-  check('面板版本号被校正为原生 versionName 2.9.1', /v2\.9\.1/.test(infoText), infoText.replace(/\s+/g, ' ').slice(0, 80));
+  check('面板版本号被校正为原生 versionName 2.10', /v2\.10/.test(infoText), infoText.replace(/\s+/g, ' ').slice(0, 80));
   const uriCall = await lastCall('Filesystem', 'getUri');
   check('getUri 指向 CACHE 目录', uriCall && uriCall[0] && uriCall[0].directory === 'CACHE', uriCall && uriCall[0] && uriCall[0].directory);
 
