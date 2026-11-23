@@ -647,7 +647,10 @@ try {
   await cdp.clickSel('#deskTiles .tile[data-go="stats"]');
   await sleep(700);
   const st = await cdp.evalJs(`(() => { const cards = [...document.querySelectorAll('.stat-card .stat-num')].map(e => e.textContent.trim());
-    const titles = [...document.querySelectorAll('.chart-title span')].map(e => e.textContent.trim());
+    // 每张卡片标题行：副标题是行内最后一个 span（热力图行内另有年份切换 span，不能按全局序号取）
+    const titles = [...document.querySelectorAll('.chart-card .chart-title')].map(t => {
+      const sp = [...t.querySelectorAll('span')]; return sp.length ? sp[sp.length - 1].textContent.trim() : '';
+    });
     return { cards, bars: document.querySelectorAll('.bars-month .bar-col').length,
              filled: document.querySelectorAll('.bars-month .bar.has').length,
              heatCols: document.querySelectorAll('.heat-col').length,
@@ -666,14 +669,14 @@ try {
   check('三张数字卡（篇/张/连续天数）',
     st.cards.length === 3 && st.cards[0] === '1篇' && st.cards[1] === '1张' && st.cards[2] === '1天', st.cards.join(' | '));
   check('分三段：概况 / 节奏 / 内容', st.sections.join('/') === '概况/节奏/内容', st.sections.join('/'));
-  check('月度柱状图 12 根', st.bars === 12);
+  check('月度柱状图 12 根（近 12 个月）', st.bars === 12);
   check('有记录的月份被点亮', st.filled === 1);
-  // ★ 写作热力图：53 周 × 7 天 = 371 格。像素格子铺满，不是 SVG 缩放（缩放会把月份标签缩到读不出来）
-  check('热力图 53 周 × 7 天 = 371 格', st.heatCols === 53 && st.heatCells === 371,
+  // ★ 写作热力图：按整年铺开，周数随该年周一/周日边界浮动（52~54 周），每周 7 天
+  check('热力图按整年铺开（周数 × 7 = 格数）', st.heatCells === st.heatCols * 7,
     `${st.heatCols} 周 / ${st.heatCells} 格`);
   // 图例里的色块也是 .heat-c，所以上面两条一律限定 .heat-grid 内，别把图例算成格子
   check('今天那一格亮着', st.heatLit === 1, `${st.heatLit} 格亮着`);
-  check('热力图标题如实报篇数', /近一年 1 篇/.test(st.heatNote), st.heatNote);
+  check('热力图标题如实报年份与篇数', /2026 年 · 1 篇/.test(st.heatNote), st.heatNote);
   // ★ 分档必须是绝对字数（1/100/300/700），不是相对四分位 —— 相对分档在只有 1 篇时
   //   会给 39 字的格子中等深浅，颜色对不上字数，用户一眼就看出"不精准"
   check('热力图图例标注字数分档', st.text.includes('1-99') && st.text.includes('700+'),
@@ -689,7 +692,7 @@ try {
     const lit = cols.find(c => c.querySelector('.bar.has'));
     return { count: cols.length, lit: lit ? lit.title : '', first: cols[0] ? cols[0].title : '' };
   })()`);
-  check('月度柱每根都带「字数 + 篇数」提示', /^\d+ 月 · \d+ 字 · \d+ 篇$/.test(monthTips.lit), monthTips.lit);
+  check('月度柱每根都带「年份 · 月份 · 字数 + 篇数」提示', /^\d+ 年 \d+ 月 · \d+ 字 · \d+ 篇$/.test(monthTips.lit), monthTips.lit);
   check('没写过的月份如实说「还没写」', /月 · 还没写$/.test(monthTips.first), monthTips.first);
   await cdp.evalJs(`(() => {
     const c = [...document.querySelectorAll('.bars-month .bar-col')].find(x => x.querySelector('.bar.has'));
@@ -697,7 +700,7 @@ try {
   const monthToast = await cdp.evalJs(`(() => { const t = document.getElementById('toast');
     return { show: t.classList.contains('show'), text: t.textContent }; })()`);
   check('点月度柱弹出该月的字数与篇数',
-    monthToast.show && /^\d+ 月 · \d+ 字 · \d+ 篇$/.test(monthToast.text.trim()), monthToast.text);
+    monthToast.show && /^\d+ 年 \d+ 月 · \d+ 字 · \d+ 篇$/.test(monthToast.text.trim()), monthToast.text);
   // ★ 走势图：点一下看那个月写了几篇、平均多少字（跨年时带年份）
   const trendTips = await cdp.evalJs(`(() => {
     const cols = [...document.querySelectorAll('.trend-dots .trend-col')];
@@ -790,7 +793,7 @@ try {
   check('「写了多久」含起始日期与天数', /^写了多久\d{4}-\d{2}-\d{2}.*起\s*·\s*\d+\s*天$/.test(rowOf('写了多久').trim()),
     rowOf('写了多久'));
   // ★ 月度柱状图本轮从"篇数"改成"字数" —— 1 篇 800 字和 1 篇 20 字在"篇数"眼里一样高
-  check('月度柱状图按字数画', /年月度字数/.test(st.text), /年月度字数|年月度分布/.test(st.text) ? '标题已含字数' : '标题未更新');
+  check('月度柱状图按字数画', /月度字数/.test(st.text), /月度字数|月度分布/.test(st.text) ? '标题已含字数' : '标题未更新');
   // ★ 新增「近 6 个月每篇字数」走势图：整页唯一回答"我写得怎么样"的图
   check('近 6 个月走势图 6 列', st.trendCols === 6, `${st.trendCols} 列`);
   check('走势图有折线', st.trendLine === true);
@@ -2063,15 +2066,24 @@ try {
       const ts = new Date(y, m - 1, d, 21, 30, 0).getTime();
       return { id: 'geo-' + y + m + d, text: t, images: [], createdAt: ts, updatedAt: ts };
     };
-    window.__diary__.State.entries = [mk(2026, 10, 5, 1512), mk(2026, 9, 15, 2230)];
+    // 取当前月与上一月，保证两篇都落在「近 12 个月」窗口内；a 篇字数多、b 篇字数少
+    const now = new Date();
+    const cur = { y: now.getFullYear(), m: now.getMonth() + 1 };
+    const prev = cur.m === 1 ? { y: cur.y - 1, m: 12 } : { y: cur.y, m: cur.m - 1 };
+    window.__diary__.State.entries = [
+      mk(prev.y, prev.m, 15, 2230),
+      mk(cur.y, cur.m, 5, 1512)
+    ];
+    window.__diary__.__geoMonths = { prev: prev.m, cur: cur.m };
     return true; })()`);
   await cdp.clickSel('#deskTiles .tile[data-go="stats"]');
   await sleep(900);
   const geo = await cdp.evalJs(`(() => {
+    const gm = window.__diary__.__geoMonths;
     const cols = [...document.querySelectorAll('.bars-month .bar-col')];
-    const bars = cols.map((c, i) => ({ m: i + 1, num: c.querySelector('.bar-num').textContent.trim(),
-      h: Math.round(c.querySelector('.bar').getBoundingClientRect().height * 10) / 10 }));
-    const m9 = bars.find(x => x.m === 9), m10 = bars.find(x => x.m === 10);
+    const byCap = (mm) => cols.find(c => c.querySelector('.bar-cap').textContent.trim() === String(mm));
+    const barOf = (c) => c ? { h: Math.round(c.querySelector('.bar').getBoundingClientRect().height * 10) / 10 } : null;
+    const hi = barOf(byCap(gm.prev)), lo = barOf(byCap(gm.cur));
     const rows = [...document.querySelectorAll('.stat-row')].map(r => {
       const v = r.querySelector('.sr-value'), l = r.querySelector('.sr-label');
       return { label: l.textContent.trim(),
@@ -2087,10 +2099,10 @@ try {
       iW: Math.round(mi.getBoundingClientRect().width * 10) / 10,
       vW: Math.round(markRow.querySelector('.sr-value').getBoundingClientRect().width * 10) / 10,
     } : null;
-    return { m9, m10, ratio: m10.h / m9.h, rows, mark };
+    return { hi, lo, ratio: lo.h / hi.h, rows, mark };
   })()`);
-  check('柱高正比于字数（9 月 2230 字柱明显高于 10 月 1512 字柱）',
-    geo.m9.h > geo.m10.h + 3, `9月 ${geo.m9.h}px / 10月 ${geo.m10.h}px`);
+  check('柱高正比于字数（字数多的月份柱明显更高）',
+    geo.hi.h > geo.lo.h + 3, `高字 ${geo.hi.h}px / 低字 ${geo.lo.h}px`);
   check('柱高比例 ≈ 字数比例 0.678（不再是 flex-shrink 后的等高）',
     Math.abs(geo.ratio - 1512 / 2230) < 0.08,
     `实测 ${geo.ratio.toFixed(3)} / 期望 ${(1512 / 2230).toFixed(3)}`);

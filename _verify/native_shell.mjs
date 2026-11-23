@@ -84,6 +84,10 @@ window.__nativeCalls = [];
       requestPermissions: function (o) { rec('Geolocation', 'requestPermissions', [o]); return Promise.resolve({ location: 'granted', coarseLocation: 'granted' }); },
       getCurrentPosition: function (o) { rec('Geolocation', 'getCurrentPosition', [o]);
         return Promise.resolve({ timestamp: Date.now(), coords: { latitude: 28.194, longitude: 112.982, accuracy: 35 } }); }
+    },
+    Camera: {
+      takePhoto: function (o) { rec('Camera', 'takePhoto', [o]); return Promise.resolve({ saved: false, webPath: '', thumbnail: '' }); },
+      chooseFromGallery: function (o) { rec('Camera', 'chooseFromGallery', [o]); return Promise.resolve({ results: [] }); }
     }
   };
   window.Capacitor = {
@@ -376,6 +380,16 @@ try {
   check('面板版本号被校正为原生 versionName 2.10', /v2\.10/.test(infoText), infoText.replace(/\s+/g, ' ').slice(0, 80));
   const uriCall = await lastCall('Filesystem', 'getUri');
   check('getUri 指向 CACHE 目录', uriCall && uriCall[0] && uriCall[0].directory === 'CACHE', uriCall && uriCall[0] && uriCall[0].directory);
+
+  console.log('\n[F3] 相册多选：原生选择器内限 9 张');
+  await ev(`window.__nativeCalls = []`);
+  await ev(`window.__diary__.pickImages()`);
+  await sleep(500);
+  const galCall = await lastCall('Camera', 'chooseFromGallery');
+  check('原生相册走 chooseFromGallery 多选', await callCount('Camera', 'chooseFromGallery') === 1);
+  check('选择器限制最多 9 张且允许多选',
+    galCall && galCall[0] && galCall[0].allowMultipleSelection === true && galCall[0].limit === 9,
+    JSON.stringify(galCall && galCall[0]));
 
   console.log('\n[G] 控制台异常');
   const errs = events.filter((e) => e.method === 'Runtime.exceptionThrown')

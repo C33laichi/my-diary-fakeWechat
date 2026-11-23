@@ -838,6 +838,14 @@ input,textarea{font-family:inherit}
 .heat-c.l3{background:var(--green);opacity:.76}
 .heat-c.l4{background:var(--green)}
 .heat-legend{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:12px;font-size:11px;color:var(--sub)}
+/* 热力图年份切换：‹ 年份 ›，位于标题最左 */
+.heat-title{gap:10px;align-items:center}
+.heat-year-switch{display:flex;align-items:center;gap:6px}
+.heat-yb{flex:none;width:22px;height:22px;border:0;border-radius:6px;background:var(--ink-tint);color:var(--text);font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;padding:0}
+.heat-yb:active{opacity:.75}
+.heat-yb:disabled{opacity:.3;pointer-events:none}
+.heat-year-num{font-size:13px;font-weight:600;min-width:40px;text-align:center}
+.heat-title-name{margin-right:auto}
 /* 每档一个竖排小单元：色块在上、字数在正下方 —— 数字不再和色块挤在一行里分不清归属 */
 .heat-legend .hl-grid{display:flex;gap:8px}
 .heat-legend .hl{display:flex;flex-direction:column;align-items:center;gap:3px}
@@ -2876,6 +2884,7 @@ var State = {
   galFilter: { y: null, m: null, d: null },
   tlIdx: null,      // 最近一次算出的年月日索引，点击 chip 时复用
   galIdx: null,
+  heatYear: null,   // 热力图当前查看的年份；null = 当前自然年
   /**
    * 当前标签是怎么进来的：'tile'（首页桌面磁贴）/ 'tab'（底部标签栏）。
    * 用途只有一个 —— 决定左上角要不要显示「返回首页」：
@@ -3124,6 +3133,24 @@ function filterLabel(f) {
   return (f.y != null ? f.y + '年' : '') +
          (f.m != null ? f.m + '月' : '') +
          (f.m != null && f.d != null ? f.d + '日' : '');
+}
+
+/**
+ * 筛选后把命中的首条滚到可视区顶部。
+ * 用矩形差值（而非 offsetTop）：不依赖 offsetParent 基准，跨容器层级也稳。
+ * 第一帧先定位；等图片 src / 折叠按钮异步落地后再校正一次，避免撑高后位置跑偏。
+ */
+function scrollFilterTarget(scEl, targetEl) {
+  if (!scEl || !targetEl) return;
+  function place() {
+    var scRect = scEl.getBoundingClientRect();
+    if (scRect.height <= 0) return;            // 面板隐藏：量不到，跳过
+    var tRect = targetEl.getBoundingClientRect();
+    if (!tRect.height) return;                  // 元素已被重渲染替换：跳过
+    scEl.scrollTop += tRect.top - scRect.top - 12;
+  }
+  requestAnimationFrame(place);
+  setTimeout(place, 160);
 }
 
 /**
@@ -3377,6 +3404,10 @@ function renderTimeline() {
   hydrateAvatars(wrap);
   hydrateAudios(wrap);
   syncPostFold(wrap);
+  // 筛选到具体年/月/日后，把命中的首条滚到可视区顶部，而不是停在列表开头
+  if (State.tlFilter.y != null || State.tlFilter.m != null || State.tlFilter.d != null) {
+    scrollFilterTarget($('#homeScroll'), wrap.querySelector('.post'));
+  }
 }
 /** 回填语音条时长：entry 里只存 id，时长在 audio 仓库里 */
 function hydrateAudios(wrap) {
@@ -3705,6 +3736,10 @@ function renderGallery() {
         }).join('') + '</div></div>';
     }).join('');
   hydrateImages(inner);
+  // 筛选到具体年/月/日后，把命中的首组滚到可视区顶部
+  if (State.galFilter.y != null || State.galFilter.m != null || State.galFilter.d != null) {
+    scrollFilterTarget($('#galleryScroll'), inner.querySelector('.gal-month'));
+  }
 }
 
 /* ---------------- 搜索 ---------------- */
@@ -3784,18 +3819,26 @@ function hourLabel(h) {
   return p + ' ' + h + ' 点';
 }
 /**
- * 年度写作热力图：近 53 周 × 7 天，每格一天。
+ * 年度写作热力图：整年 × 7 天，每格一天。
  * 分档用**绝对字数阈值**（1 / 100 / 300 / 700 字四档）—— 颜色必须能对上字数：
  * 只写了 39 字，格子就得是最浅档，不能靠"相对排名"装成中等深浅。
  * （第一版做过四分位相对分档，用户一眼看出不对：颜色对不上字数就是不精准。）
  * 它不设样本门槛：数据少时整片空格子本身就是信息，这是它比折线图强的地方。
+ *
+ * @param {Object} byDay 以「当天 00:00 时间戳」为键、当天字数为值
+ * @param {number} year 要展示的年份；展示区间为该年第一个周一 ~ 年末最后一天
  */
-function heatmapHtml(byDay) {
-  var WEEKS = 53;
+function heatmapHtml(byDay, year) {
   var today = new Date();
   today.setHours(0, 0, 0, 0);
-  var start = new Date(today);
-  start.setDate(start.getDate() - ((start.getDay() + 6) % 7) - 52 * 7); // 本周一往前 52 周
+  // 该年起点：1 月 1 日所在周的周一；终点：12 月 31 日所在周的周日（与 GitHub 热力图同构）
+  var yearStart = new Date(year, 0, 1);
+  var yearEnd = new Date(year, 11, 31);
+  var start = new Date(yearStart);
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  var end = new Date(yearEnd);
+  end.setDate(end.getDate() + (6 - ((end.getDay() + 6) % 7)));
+  var WEEKS = Math.round((end - start) / (7 * 86400000)) + 1;
 
   function level(v) {
     if (!v) return 0;
@@ -3805,19 +3848,26 @@ function heatmapHtml(byDay) {
     return 4;
   }
 
-  var lastMonth = -1;
+  var lastMonth = -1, lastYear = -1;
   var cols = '';
   for (var c = 0; c < WEEKS; c++) {
     var mon = new Date(start);
     mon.setDate(start.getDate() + c * 7);
     var label = '';
-    if (mon.getMonth() !== lastMonth) { lastMonth = mon.getMonth(); label = (lastMonth + 1) + '月'; }
+    if (mon.getMonth() !== lastMonth) {
+      lastMonth = mon.getMonth();
+      // 跨年的第一列带上年份（如 2025/12、2026/1），避免两个 1 月 / 12 月分不清
+      label = (mon.getFullYear() !== lastYear ? mon.getFullYear() + '/' : '') + (lastMonth + 1) + '月';
+      lastYear = mon.getFullYear();
+    }
     var cells = '';
     for (var r = 0; r < 7; r++) {
       var d = new Date(start);
       d.setDate(start.getDate() + c * 7 + r);
       var n = byDay[d.getTime()] || 0;
-      var lv = d.getTime() <= today.getTime() ? level(n) : 0;
+      // 超出该年或晚于今天的格子不画（往年已结束、未来还没到）
+      var inRange = d.getFullYear() === year && d.getTime() <= today.getTime();
+      var lv = inRange ? level(n) : 0;
       cells += '<div class="heat-c' + (lv ? ' l' + lv : '') + '" title="' +
         (d.getMonth() + 1) + '月' + d.getDate() + '日' + (n ? ' · ' + n + ' 字' : '') + '"></div>';
     }
@@ -3856,18 +3906,22 @@ function renderStats() {
   var chars = list.reduce(function (n, e) { return n + (e.text ? e.text.length : 0); }, 0);
   var imgs = totalImageCount();
   var now = new Date();
-  var year = now.getFullYear();
   // 月度柱状图按**字数**画，不按篇数 —— 1 篇 800 字和 1 篇 20 字在"篇数"眼里一样高，
   // 那根柱子就等于没画。篇数只作为副标题里的一个注脚。
-  var months = new Array(12).fill(0);      // 每月字数
-  var monthsN = new Array(12).fill(0);     // 每月篇数（副标题用）
+  // 用「近 12 个月」滚动窗口而不是当前自然年：跨年后上一年 12 月的数据仍能看到，
+  // 不会一进新年就变成一片空柱。
+  var monthBins = [];   // { y, m, chars, n } 按时间从旧到新
+  for (var mi = 11; mi >= 0; mi--) {
+    var mm = new Date(now.getFullYear(), now.getMonth() - mi, 1);
+    monthBins.push({ y: mm.getFullYear(), m: mm.getMonth(), chars: 0, n: 0 });
+  }
   list.forEach(function (e) {
     var d = new Date(e.createdAt);
-    if (d.getFullYear() === year) {
-      months[d.getMonth()] += (e.text ? e.text.length : 0);
-      monthsN[d.getMonth()]++;
-    }
+    var slot = monthBins.find(function (b) { return b.y === d.getFullYear() && b.m === d.getMonth(); });
+    if (slot) { slot.chars += (e.text ? e.text.length : 0); slot.n++; }
   });
+  var months = monthBins.map(function (b) { return b.chars; });
+  var monthsN = monthBins.map(function (b) { return b.n; });
   var max = Math.max.apply(null, months.concat([1]));
 
   // 记录天数：key 用「当天 00:00 的时间戳」，比 toDateString 稳（不受 locale 影响）
@@ -3881,6 +3935,20 @@ function renderStats() {
     var k = startOfDay(e.createdAt);
     byDay[k] = (byDay[k] || 0) + (e.text ? e.text.length : 0);
   });
+
+  // 热力图可选年份：有记录的最早一年 ~ 当前年，升序；不展示当前年之后的年份
+  var curYear = now.getFullYear();
+  var heatYears = [];
+  list.forEach(function (e) { heatYears.push(new Date(e.createdAt).getFullYear()); });
+  heatYears = heatYears.filter(function (y) { return y <= curYear; })
+    .concat([curYear]).filter(function (y, i, a) { return a.indexOf(y) === i; })
+    .sort(function (a, b) { return a - b; });
+  // 上次选的年份若已不在范围内（数据被清空等），回落到当前年
+  if (State.heatYear == null || heatYears.indexOf(State.heatYear) < 0) State.heatYear = curYear;
+  var heatYear = State.heatYear;
+  var heatIdx = heatYears.indexOf(heatYear);
+  var heatPrev = heatIdx > 0 ? heatYears[heatIdx - 1] : null;
+  var heatNext = heatIdx >= 0 && heatIdx < heatYears.length - 1 ? heatYears[heatIdx + 1] : null;
 
   // 本周起点（按周一开头算）。「近 7 天」用它往前推 6 天，
   // 不再分别算"今天/本周/本月"三行 —— 那三行粒度不齐、彼此不可比，
@@ -3987,8 +4055,11 @@ function renderStats() {
   var markText = marks.length ? marks.join(' · ') : '';
 
   // 热力图副标题：样本不够时不摆「最长空档」（只有一天记录时它没意义）
-  var heatNote = '近一年 ' + list.length + ' 篇' +
-    (dayKeys.length > 1 && gapMax > 0 ? ' · 最长空档 ' + gapMax + ' 天' : '');
+  // 副标题：当前选中这一年写了几篇（跨年回看时不再显示"近一年"）
+  var yearEntries = list.filter(function (e) {
+    return new Date(e.createdAt).getFullYear() === heatYear;
+  });
+  var heatNote = heatYear + ' 年 · ' + yearEntries.length + ' 篇';
   // 时段图的结论直接写在标题右侧：图给形状、文字给答案，
   // 这样就不必在明细里为「最常写的时间 / 日子」再占两行（上一轮刚去重过一次）
   var hourLabels = [];
@@ -4011,8 +4082,16 @@ function renderStats() {
     '<div class="stat-sec first">' +
       statHead('概况') +
       '<div class="chart-card">' +
-        '<div class="chart-title">写作热力图<span>' + escapeHtml(heatNote) + '</span></div>' +
-        heatmapHtml(byDay) +
+        '<div class="chart-title heat-title">' +
+          '<span class="heat-year-switch">' +
+            '<button type="button" class="heat-yb" data-heat-year="' + heatPrev + '"' + (heatPrev == null ? ' disabled' : '') + ' aria-label="上一年">‹</button>' +
+            '<span class="heat-year-num">' + heatYear + '</span>' +
+            '<button type="button" class="heat-yb" data-heat-year="' + heatNext + '"' + (heatNext == null ? ' disabled' : '') + ' aria-label="下一年">›</button>' +
+          '</span>' +
+          '<span class="heat-title-name">写作热力图</span>' +
+          '<span>' + escapeHtml(heatNote) + '</span>' +
+        '</div>' +
+        heatmapHtml(byDay, heatYear) +
         '<div class="heat-legend"><span>字数</span><div class="hl-grid">' +
           '<span class="hl"><i class="heat-c"></i>0</span>' +
           '<span class="hl"><i class="heat-c l1"></i>1-99</span>' +
@@ -4042,19 +4121,19 @@ function renderStats() {
     '<div class="stat-sec">' +
       statHead('节奏', '什么时候写') +
       '<div class="chart-card">' +
-        '<div class="chart-title">' + year + ' 年月度字数<span>最高 ' + max + ' 字 · 共 ' +
+        '<div class="chart-title">近 12 个月月度字数<span>最高 ' + max + ' 字 · 共 ' +
           monthsN.reduce(function (a, b) { return a + b; }, 0) + ' 篇</span></div>' +
         '<div class="bars bars-month">' + months.map(function (n, i) {
           var h = Math.round(n / max * 100);
           var mn = monthsN[i];
-          // 柱子自带该月的「字数 + 篇数」——标题栏只报最高月和总数，
-          // 具体某个月写了多少篇得点开看。title 同时供桌面 hover 与手机点击（见下方 toast）
-          var tip = (i + 1) + ' 月 · ' + (mn ? n + ' 字 · ' + mn + ' 篇' : '还没写');
+          var b = monthBins[i];
+          // 跨年份：柱帽只写月数，标题提示里带上年份，避免分不清是哪一年
+          var tip = b.y + ' 年 ' + (b.m + 1) + ' 月 · ' + (mn ? n + ' 字 · ' + mn + ' 篇' : '还没写');
           return '<div class="bar-col" title="' + escapeHtml(tip) + '">' +
             '<div class="bar-num">' + (n ? (n >= 1000 ? (Math.round(n / 100) / 10) + 'k' : n) : '') + '</div>' +
             '<div class="bar-track"><div class="bar' + (n ? ' has' : '') +
               '" style="height:' + Math.max(h, 2) + '%"></div></div>' +
-            '<div class="bar-cap">' + (i + 1) + '</div>' +
+            '<div class="bar-cap">' + (b.m + 1) + '</div>' +
           '</div>';
         }).join('') + '</div>' +
       '</div>' +
@@ -4122,6 +4201,19 @@ function renderStats() {
       var t = ev.target;
       // 图例里的色块也是 .heat-c，但没有 title，正好被这一条挡掉
       if (t.classList && t.classList.contains('heat-c') && t.title) toast(t.title);
+    });
+  }
+
+  // 年份切换：‹ › 改 State.heatYear 后重渲染统计页；切到当前年不保留越界状态
+  var yb = $('#statInner .heat-year-switch');
+  if (yb) {
+    yb.addEventListener('click', function (ev) {
+      var btn = ev.target && ev.target.closest ? ev.target.closest('[data-heat-year]') : null;
+      if (!btn || btn.disabled) return;
+      var y = Number(btn.getAttribute('data-heat-year'));
+      if (!y) return;
+      State.heatYear = y;
+      renderStats();
     });
   }
 
@@ -4318,6 +4410,44 @@ function openCameraSheet() {
     },
     { label: '从手机相册选择', onClick: function () { pickImages(function () { openComposer(null); }); } }
   ]);
+}
+
+/**
+ * 从手机相册多选图片。
+ * App 内优先走原生 Camera.chooseFromGallery：系统选择器直接把上限限制到 9 张，
+ * 不用等选完再被截断；网页 / 插件不可用时回退到 <input multiple>（仍由 addImages 截断到 9）。
+ */
+function pickImages(cb) {
+  var room = Math.max(0, 9 - State.draftImages.length);
+  if (room <= 0) { toast('最多只能添加 9 张图片'); return; }
+  var Camera = (Native.isNative && Native.hasPlugin('Camera')) ? Native.plugin('Camera') : null;
+  if (Camera && Camera.chooseFromGallery) {
+    toast('正在打开相册…', 1200);
+    Camera.chooseFromGallery({
+      quality: 90,
+      correctOrientation: true,
+      allowMultipleSelection: true,
+      limit: room
+    }).then(function (res) {
+      var results = (res && res.results) || [];
+      if (!results.length) return;   // 用户取消
+      if (cb) cb();
+      // 逐张读成 Blob 后走统一压缩 / 截断流程
+      return Promise.all(results.map(photoBlob)).then(function (blobs) {
+        var valid = blobs.filter(Boolean);
+        if (!valid.length) return;
+        addImages(valid);
+      });
+    }).catch(function (err) {
+      var code = (err && (err.code || err.message)) || String(err || '');
+      if (/0006/.test(code) || /cancel/i.test(code)) return;
+      console.warn('[Camera] 相册选择失败', err);
+      toast('相册选择失败：' + (((err && err.message) || String(err)) || '未知错误'));
+    });
+    return;
+  }
+  multiCb = cb || null;
+  $('#filePicker').click();
 }
 
 /**
@@ -5053,15 +5183,30 @@ function bindLongPress(root, selector, handler) {
 /* ---------------- 设置页渲染 ---------------- */
 function renderSettings() {
   renderProfile();
-  Store.usage().then(function (bytes) {
+  // 配额分三种后端：IndexedDB 走浏览器真实配额（按磁盘可用空间比例，通常远大于 200MB）；
+  // localStorage 降级约 5MB；内存临时模式不持久化、不画容量条。
+  function quotaBytes() {
+    if (Store.mode === 'local') return Promise.resolve(5 * 1024 * 1024);
+    if (Store.mode === 'memory') return Promise.resolve(0);
+    if (navigator.storage && navigator.storage.estimate) {
+      return navigator.storage.estimate().then(function (q) {
+        // quota 为浏览器给本来源的总配额；取不到时回退 200MB 保守值
+        return (q && q.quota) || 200 * 1024 * 1024;
+      }).catch(function () { return 200 * 1024 * 1024; });
+    }
+    return Promise.resolve(200 * 1024 * 1024);
+  }
+  Promise.all([Store.usage(), quotaBytes()]).then(function (res) {
+    var bytes = res[0], limit = res[1];
     var hint = $('#exportHint');
     var bar = $('#storageBar');
     // 关键：0 也要写一遍。以前这里遇到 0 直接 return，于是「清空全部日记」之后屏幕上
     // 会一直留着清空前那个「已用 xx MB」——看着像没清干净。
-    hint.textContent = bytes ? '已用 ' + ImageProc.fmtSize(bytes) : '暂无内容';
-    bar.style.display = bytes ? 'block' : 'none';
-    if (!bytes) return;
-    var limit = Store.mode === 'idb' ? 200 * 1024 * 1024 : 5 * 1024 * 1024;
+    hint.textContent = bytes
+      ? ('已用 ' + ImageProc.fmtSize(bytes) + (limit ? ' / 约 ' + ImageProc.fmtSize(limit) : ''))
+      : '暂无内容';
+    bar.style.display = (bytes && limit) ? 'block' : 'none';
+    if (!bytes || !limit) return;
     bar.firstElementChild.style.width = Math.min(100, bytes / limit * 100).toFixed(1) + '%';
   });
 }
@@ -6712,7 +6857,6 @@ function bindEvents() {
 var singleCb = null;
 var multiCb = null;      // 多选相册：选完之后要做什么（时间线相机的入口用它带出发布页）
 var cameraCb = null;     // 拍照：同上
-function pickImages(cb) { multiCb = cb || null; $('#filePicker').click(); }
 function pickCamera(cb) { cameraCb = cb || null; $('#fileCamera').click(); }
 function pickSingle(cb) { singleCb = cb; $('#filePickerSingle').click(); }
 
