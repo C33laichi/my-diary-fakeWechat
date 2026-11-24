@@ -57,7 +57,7 @@ window.__nativeCalls = [];
         return { remove: function () {} };
       },
       exitApp: function () { rec('App', 'exitApp', []); return Promise.resolve(); },
-      getInfo: function () { rec('App', 'getInfo', []); return Promise.resolve({ name: '我的日记', id: 'com.chenchang.diary', version: '2.10', build: '15' }); }
+      getInfo: function () { rec('App', 'getInfo', []); return Promise.resolve({ name: '我的日记', id: 'com.chenchang.diary', version: '2.10.1', build: '16' }); }
     },
     Filesystem: {
       writeFile: function (o) {
@@ -377,7 +377,7 @@ try {
   const infoText = await ev(`document.getElementById('dialogText').textContent`);
   check('原生端调用了 App.getInfo', await callCount('App', 'getInfo') === 1);
   check('原生端调用了 Filesystem.getUri 取真实备份目录', await callCount('Filesystem', 'getUri') === 1);
-  check('面板版本号被校正为原生 versionName 2.10', /v2\.10/.test(infoText), infoText.replace(/\s+/g, ' ').slice(0, 80));
+  check('面板版本号被校正为原生 versionName 2.10.1', /v2\.10\.1/.test(infoText), infoText.replace(/\s+/g, ' ').slice(0, 80));
   const uriCall = await lastCall('Filesystem', 'getUri');
   check('getUri 指向 CACHE 目录', uriCall && uriCall[0] && uriCall[0].directory === 'CACHE', uriCall && uriCall[0] && uriCall[0].directory);
 

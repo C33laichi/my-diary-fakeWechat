@@ -170,7 +170,7 @@ input,textarea{font-family:inherit}
    每一级只在"确实有分支"时出现（只有一年不摆年份行、某年只有一个月就直接摆日期）。
    横向滚动而不是换行铺满 —— 年份/日期一多（跨四五年、一个月 31 天）换行会把列表顶到屏幕外。
    只列出**有数据**的年月日：空的日期点进去什么都没有，是个纯粹的噪音（统计页同理）。 */
-.timebar{background:var(--card);border-bottom:.5px solid var(--line);padding:10px 0 2px}
+.timebar{background:var(--card);border-bottom:.5px solid var(--line);padding:10px 0 2px;position:sticky;top:0;z-index:3}
 .timebar[hidden]{display:none}
 .tb-row{
   display:flex;gap:7px;padding:0 14px 8px;overflow-x:auto;
@@ -829,8 +829,9 @@ input,textarea{font-family:inherit}
 .heat-dows{display:flex;flex-direction:column;gap:3px;padding-top:17px}
 .heat-dows span{height:12px;line-height:12px;font-size:10.5px;color:var(--sub)}
 .heat-col{display:flex;flex-direction:column;gap:3px}
-/* 月份标签固定 12px 宽并允许溢出：不固定的话文字会把整列撑宽，格子就散了 */
-.heat-m{flex:none;width:12px;height:14px;line-height:14px;font-size:10.5px;color:var(--sub);white-space:nowrap}
+/* 月份标签：只写月份，宽度跟格子，文字不横向溢出叠到相邻列 */
+.heat-m{flex:none;width:12px;height:14px;display:flex;align-items:center;justify-content:center;line-height:14px;color:var(--sub);white-space:nowrap}
+.hm-m{font-size:10px}
 .heat-c{width:12px;height:12px;border-radius:3px;background:var(--ink-tint)}
 .heat-grid .heat-c{cursor:pointer}
 .heat-c.l1{background:var(--green);opacity:.3}
@@ -838,14 +839,16 @@ input,textarea{font-family:inherit}
 .heat-c.l3{background:var(--green);opacity:.76}
 .heat-c.l4{background:var(--green)}
 .heat-legend{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:12px;font-size:11px;color:var(--sub)}
-/* 热力图年份切换：‹ 年份 ›，位于标题最左 */
+/* 热力图年份切换：‹ 年份 ›，独占一行，位于月份标签上方，不和标题挤在一起 */
+.heat-year-row{margin:0 0 10px}
 .heat-title{gap:10px;align-items:center}
+/* 标题名要覆盖全局 .chart-title span 的 sub 色与 auto 左边距，否则标题被推到中间还变灰 */
+.heat-title .heat-title-name{margin-left:0;margin-right:auto;color:var(--text);font-size:13.5px;font-weight:600}
 .heat-year-switch{display:flex;align-items:center;gap:6px}
 .heat-yb{flex:none;width:22px;height:22px;border:0;border-radius:6px;background:var(--ink-tint);color:var(--text);font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;padding:0}
 .heat-yb:active{opacity:.75}
 .heat-yb:disabled{opacity:.3;pointer-events:none}
-.heat-year-num{font-size:13px;font-weight:600;min-width:40px;text-align:center}
-.heat-title-name{margin-right:auto}
+.heat-year-num{font-size:13px;font-weight:600;min-width:40px;text-align:center;color:var(--text)}
 /* 每档一个竖排小单元：色块在上、字数在正下方 —— 数字不再和色块挤在一行里分不清归属 */
 .heat-legend .hl-grid{display:flex;gap:8px}
 .heat-legend .hl{display:flex;flex-direction:column;align-items:center;gap:3px}
@@ -3135,22 +3138,16 @@ function filterLabel(f) {
          (f.m != null && f.d != null ? f.d + '日' : '');
 }
 
-/**
- * 筛选后把命中的首条滚到可视区顶部。
- * 用矩形差值（而非 offsetTop）：不依赖 offsetParent 基准，跨容器层级也稳。
- * 第一帧先定位；等图片 src / 折叠按钮异步落地后再校正一次，避免撑高后位置跑偏。
- */
-function scrollFilterTarget(scEl, targetEl) {
-  if (!scEl || !targetEl) return;
-  function place() {
-    var scRect = scEl.getBoundingClientRect();
-    if (scRect.height <= 0) return;            // 面板隐藏：量不到，跳过
-    var tRect = targetEl.getBoundingClientRect();
-    if (!tRect.height) return;                  // 元素已被重渲染替换：跳过
-    scEl.scrollTop += tRect.top - scRect.top - 12;
-  }
-  requestAnimationFrame(place);
-  setTimeout(place, 160);
+/** 把每行当前选中的 chip 在其横向行内滚动到居中（微信式：选中项不被挤到边缘） */
+function centerActiveChip(host) {
+  host.querySelectorAll('.tb-row').forEach(function (row) {
+    var on = row.querySelector('.tb-chip.on');
+    if (!on) return;
+    var r = on.getBoundingClientRect(), rr = row.getBoundingClientRect();
+    if (!rr.width) return;
+    var delta = (r.left + r.width / 2) - (rr.left + rr.width / 2);
+    row.scrollLeft = delta;
+  });
 }
 
 /**
@@ -3211,6 +3208,7 @@ function renderTimebar(host, idx, f, unit) {
   if (!html) { host.innerHTML = ''; host.hidden = true; return; }
   host.hidden = false;
   host.innerHTML = html;
+  centerActiveChip(host);
 }
 
 /** chip 的点击委托：data-tb 说明点的是年/月/日，data-v 是值（空串 = 不限） */
@@ -3404,10 +3402,6 @@ function renderTimeline() {
   hydrateAvatars(wrap);
   hydrateAudios(wrap);
   syncPostFold(wrap);
-  // 筛选到具体年/月/日后，把命中的首条滚到可视区顶部，而不是停在列表开头
-  if (State.tlFilter.y != null || State.tlFilter.m != null || State.tlFilter.d != null) {
-    scrollFilterTarget($('#homeScroll'), wrap.querySelector('.post'));
-  }
 }
 /** 回填语音条时长：entry 里只存 id，时长在 audio 仓库里 */
 function hydrateAudios(wrap) {
@@ -3736,10 +3730,6 @@ function renderGallery() {
         }).join('') + '</div></div>';
     }).join('');
   hydrateImages(inner);
-  // 筛选到具体年/月/日后，把命中的首组滚到可视区顶部
-  if (State.galFilter.y != null || State.galFilter.m != null || State.galFilter.d != null) {
-    scrollFilterTarget($('#galleryScroll'), inner.querySelector('.gal-month'));
-  }
 }
 
 /* ---------------- 搜索 ---------------- */
@@ -3831,13 +3821,19 @@ function hourLabel(h) {
 function heatmapHtml(byDay, year) {
   var today = new Date();
   today.setHours(0, 0, 0, 0);
-  // 该年起点：1 月 1 日所在周的周一；终点：12 月 31 日所在周的周日（与 GitHub 热力图同构）
-  var yearStart = new Date(year, 0, 1);
-  var yearEnd = new Date(year, 11, 31);
-  var start = new Date(yearStart);
+  // 起点：1 月 1 日所在周的周一。
+  // 终点：往年已结束 → 12 月 31 日所在周周日；当前年 → 只铺到本周日，
+  //       后面还没到的日期不提前摆出来（避免右侧一大片未来空格）。
+  var start = new Date(year, 0, 1);
   start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
-  var end = new Date(yearEnd);
-  end.setDate(end.getDate() + (6 - ((end.getDay() + 6) % 7)));
+  var end;
+  if (year === today.getFullYear()) {
+    end = new Date(today);
+    end.setDate(end.getDate() + (6 - ((end.getDay() + 6) % 7)));
+  } else {
+    end = new Date(year, 11, 31);
+    end.setDate(end.getDate() + (6 - ((end.getDay() + 6) % 7)));
+  }
   var WEEKS = Math.round((end - start) / (7 * 86400000)) + 1;
 
   function level(v) {
@@ -3848,7 +3844,7 @@ function heatmapHtml(byDay, year) {
     return 4;
   }
 
-  var lastMonth = -1, lastYear = -1;
+  var lastMonth = -1;
   var cols = '';
   for (var c = 0; c < WEEKS; c++) {
     var mon = new Date(start);
@@ -3856,20 +3852,23 @@ function heatmapHtml(byDay, year) {
     var label = '';
     if (mon.getMonth() !== lastMonth) {
       lastMonth = mon.getMonth();
-      // 跨年的第一列带上年份（如 2025/12、2026/1），避免两个 1 月 / 12 月分不清
-      label = (mon.getFullYear() !== lastYear ? mon.getFullYear() + '/' : '') + (lastMonth + 1) + '月';
-      lastYear = mon.getFullYear();
+      // 只标注属于当前展示年份的月份；跨年起始周里上一年 12 月那列不标，
+      // 否则「12月」和相邻的「1月」两个溢出标签会横向撞在一起。
+      if (mon.getFullYear() === year) {
+        label = '<span class="hm-m">' + (lastMonth + 1) + '月</span>';
+      }
     }
     var cells = '';
     for (var r = 0; r < 7; r++) {
       var d = new Date(start);
       d.setDate(start.getDate() + c * 7 + r);
       var n = byDay[d.getTime()] || 0;
-      // 超出该年或晚于今天的格子不画（往年已结束、未来还没到）
+      // 只点亮属于当前展示年份、且不晚于今天的格子；跨年起始周里上一年 12 月末、
+      // 终点周里下一年 1 月初的补位格仍保留位置对齐，但置灰占位、不显示日期。
       var inRange = d.getFullYear() === year && d.getTime() <= today.getTime();
       var lv = inRange ? level(n) : 0;
-      cells += '<div class="heat-c' + (lv ? ' l' + lv : '') + '" title="' +
-        (d.getMonth() + 1) + '月' + d.getDate() + '日' + (n ? ' · ' + n + ' 字' : '') + '"></div>';
+      var tip = inRange ? ((d.getMonth() + 1) + '月' + d.getDate() + '日' + (n ? ' · ' + n + ' 字' : '')) : '';
+      cells += '<div class="heat-c' + (lv ? ' l' + lv : '') + '" title="' + tip + '"></div>';
     }
     cols += '<div class="heat-col"><div class="heat-m">' + label + '</div>' + cells + '</div>';
   }
@@ -4082,12 +4081,14 @@ function renderStats() {
     '<div class="stat-sec first">' +
       statHead('概况') +
       '<div class="chart-card">' +
-        '<div class="chart-title heat-title">' +
+        '<div class="heat-year-row">' +
           '<span class="heat-year-switch">' +
             '<button type="button" class="heat-yb" data-heat-year="' + heatPrev + '"' + (heatPrev == null ? ' disabled' : '') + ' aria-label="上一年">‹</button>' +
             '<span class="heat-year-num">' + heatYear + '</span>' +
             '<button type="button" class="heat-yb" data-heat-year="' + heatNext + '"' + (heatNext == null ? ' disabled' : '') + ' aria-label="下一年">›</button>' +
           '</span>' +
+        '</div>' +
+        '<div class="chart-title heat-title">' +
           '<span class="heat-title-name">写作热力图</span>' +
           '<span>' + escapeHtml(heatNote) + '</span>' +
         '</div>' +
@@ -4674,7 +4675,7 @@ function openSheet(items) {
  * 导出路径先按平台给静态兜底，原生端再用 Filesystem.getUri() 取真实目录校正。
  */
 /* 网页兜底版本：原生包以 App.getInfo() 读到的 versionName 为准，这里只是读不到插件时的退路 */
-var APP_FALLBACK_VERSION = '2.10';
+var APP_FALLBACK_VERSION = '2.10.1';
 
 function openInfoDialog() {
   var APP_ID = 'com.chenchang.diary';
@@ -5183,30 +5184,15 @@ function bindLongPress(root, selector, handler) {
 /* ---------------- 设置页渲染 ---------------- */
 function renderSettings() {
   renderProfile();
-  // 配额分三种后端：IndexedDB 走浏览器真实配额（按磁盘可用空间比例，通常远大于 200MB）；
-  // localStorage 降级约 5MB；内存临时模式不持久化、不画容量条。
-  function quotaBytes() {
-    if (Store.mode === 'local') return Promise.resolve(5 * 1024 * 1024);
-    if (Store.mode === 'memory') return Promise.resolve(0);
-    if (navigator.storage && navigator.storage.estimate) {
-      return navigator.storage.estimate().then(function (q) {
-        // quota 为浏览器给本来源的总配额；取不到时回退 200MB 保守值
-        return (q && q.quota) || 200 * 1024 * 1024;
-      }).catch(function () { return 200 * 1024 * 1024; });
-    }
-    return Promise.resolve(200 * 1024 * 1024);
-  }
-  Promise.all([Store.usage(), quotaBytes()]).then(function (res) {
-    var bytes = res[0], limit = res[1];
+  Store.usage().then(function (bytes) {
     var hint = $('#exportHint');
     var bar = $('#storageBar');
     // 关键：0 也要写一遍。以前这里遇到 0 直接 return，于是「清空全部日记」之后屏幕上
     // 会一直留着清空前那个「已用 xx MB」——看着像没清干净。
-    hint.textContent = bytes
-      ? ('已用 ' + ImageProc.fmtSize(bytes) + (limit ? ' / 约 ' + ImageProc.fmtSize(limit) : ''))
-      : '暂无内容';
-    bar.style.display = (bytes && limit) ? 'block' : 'none';
-    if (!bytes || !limit) return;
+    hint.textContent = bytes ? '已用 ' + ImageProc.fmtSize(bytes) : '暂无内容';
+    bar.style.display = bytes ? 'block' : 'none';
+    if (!bytes) return;
+    var limit = Store.mode === 'idb' ? 200 * 1024 * 1024 : 5 * 1024 * 1024;
     bar.firstElementChild.style.width = Math.min(100, bytes / limit * 100).toFixed(1) + '%';
   });
 }
