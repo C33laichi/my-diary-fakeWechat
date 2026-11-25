@@ -655,6 +655,7 @@ try {
              filled: document.querySelectorAll('.bars-month .bar.has').length,
              heatCols: document.querySelectorAll('.heat-col').length,
              heatCells: document.querySelectorAll('.heat-grid .heat-c').length,
+             heatPh: document.querySelectorAll('.heat-grid .heat-ph').length,
              heatLit: [...document.querySelectorAll('.heat-grid .heat-c')].filter(e => /l[1-4]/.test(e.className)).length,
              // 卡片标题顺序：0 热力图 / 1 月度字数 / 2 近 6 月走势 / 3 写作时段
              heatNote: titles[0] || '', rhythmNote: titles[3] || '',
@@ -671,9 +672,11 @@ try {
   check('分三段：概况 / 节奏 / 内容', st.sections.join('/') === '概况/节奏/内容', st.sections.join('/'));
   check('月度柱状图 12 根（近 12 个月）', st.bars === 12);
   check('有记录的月份被点亮', st.filled === 1);
-  // ★ 写作热力图：按整年铺开，周数随该年周一/周日边界浮动（52~54 周），每周 7 天
-  check('热力图按整年铺开（周数 × 7 = 格数）', st.heatCells === st.heatCols * 7,
-    `${st.heatCols} 周 / ${st.heatCells} 格`);
+  // ★ 写作热力图：按整年铺开，周数随该年周一/周日边界浮动（52~54 周），每周 7 天；
+  // 未来日期/跨年补位是透明占位格（.heat-ph），和可点格子（.heat-c）合计仍是每周 7 格
+  check('热力图按整年铺开（周数 × 7 = 格子+占位）',
+    st.heatCells + st.heatPh === st.heatCols * 7,
+    `${st.heatCols} 周 / ${st.heatCells} 格 + ${st.heatPh} 占位`);
   // 图例里的色块也是 .heat-c，所以上面两条一律限定 .heat-grid 内，别把图例算成格子
   check('今天那一格亮着', st.heatLit === 1, `${st.heatLit} 格亮着`);
   check('热力图标题如实报年份与篇数', /2026 年 · 1 篇/.test(st.heatNote), st.heatNote);

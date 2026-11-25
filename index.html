@@ -834,6 +834,8 @@ input,textarea{font-family:inherit}
 .hm-m{font-size:10px}
 .heat-c{width:12px;height:12px;border-radius:3px;background:var(--ink-tint)}
 .heat-grid .heat-c{cursor:pointer}
+/* 未来日期 / 跨年补位的占位格：只占位置对齐，不亮、不可点、无日期 */
+.heat-ph{width:12px;height:12px}
 .heat-c.l1{background:var(--green);opacity:.3}
 .heat-c.l2{background:var(--green);opacity:.52}
 .heat-c.l3{background:var(--green);opacity:.76}
@@ -3822,14 +3824,13 @@ function heatmapHtml(byDay, year) {
   var today = new Date();
   today.setHours(0, 0, 0, 0);
   // 起点：1 月 1 日所在周的周一。
-  // 终点：往年已结束 → 12 月 31 日所在周周日；当前年 → 只铺到本周日，
-  //       后面还没到的日期不提前摆出来（避免右侧一大片未来空格）。
+  // 终点：往年已结束 → 12 月 31 日所在周周日；当前年 → 只铺到今天，
+  //       今天之后还没到的日期不提前摆出来（右侧不留未来空格）。
   var start = new Date(year, 0, 1);
   start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
   var end;
   if (year === today.getFullYear()) {
     end = new Date(today);
-    end.setDate(end.getDate() + (6 - ((end.getDay() + 6) % 7)));
   } else {
     end = new Date(year, 11, 31);
     end.setDate(end.getDate() + (6 - ((end.getDay() + 6) % 7)));
@@ -3863,11 +3864,12 @@ function heatmapHtml(byDay, year) {
       var d = new Date(start);
       d.setDate(start.getDate() + c * 7 + r);
       var n = byDay[d.getTime()] || 0;
-      // 只点亮属于当前展示年份、且不晚于今天的格子；跨年起始周里上一年 12 月末、
-      // 终点周里下一年 1 月初的补位格仍保留位置对齐，但置灰占位、不显示日期。
+      // 只点亮属于当前展示年份、且不晚于今天的格子；上一年/下一年补位、未来日期
+      // 都只渲染透明占位格：不亮、不挂日期、不可点击查看。
       var inRange = d.getFullYear() === year && d.getTime() <= today.getTime();
-      var lv = inRange ? level(n) : 0;
-      var tip = inRange ? ((d.getMonth() + 1) + '月' + d.getDate() + '日' + (n ? ' · ' + n + ' 字' : '')) : '';
+      if (!inRange) { cells += '<div class="heat-ph"></div>'; continue; }
+      var lv = level(n);
+      var tip = (d.getMonth() + 1) + '月' + d.getDate() + '日' + (n ? ' · ' + n + ' 字' : '');
       cells += '<div class="heat-c' + (lv ? ' l' + lv : '') + '" title="' + tip + '"></div>';
     }
     cols += '<div class="heat-col"><div class="heat-m">' + label + '</div>' + cells + '</div>';
@@ -4675,7 +4677,9 @@ function openSheet(items) {
  * 导出路径先按平台给静态兜底，原生端再用 Filesystem.getUri() 取真实目录校正。
  */
 /* 网页兜底版本：原生包以 App.getInfo() 读到的 versionName 为准，这里只是读不到插件时的退路 */
-var APP_FALLBACK_VERSION = '2.10.1';
+var APP_FALLBACK_VERSION = '2.10.2';
+/* 构建日期：打包当天由打包脚本固化进此常量，不是打开「关于」弹窗当天 */
+var APP_BUILD_DATE = '2026-11-25';
 
 function openInfoDialog() {
   var APP_ID = 'com.chenchang.diary';
@@ -4695,11 +4699,8 @@ function openInfoDialog() {
     note = '网页版点导出后，文件会直接下载到浏览器的默认下载目录，在下载记录里就能找到。';
   }
 
-  // 构建日期：打包当天（本地时区），只留 YYYY-MM-DD，不附加变更描述
-  var now = new Date();
-  var built = now.getFullYear() + '-' +
-    String(now.getMonth() + 1).padStart(2, '0') + '-' +
-    String(now.getDate()).padStart(2, '0');
+  // 构建日期：打包时固化进 APP_BUILD_DATE 常量，不随打开弹窗的日期变化
+  var built = APP_BUILD_DATE;
 
   var ver = 'v' + APP_FALLBACK_VERSION;
   // 仅原生私有目录才需要提示"普通人看不到"；网页下载目录在下载记录里可见

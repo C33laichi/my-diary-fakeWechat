@@ -144,6 +144,22 @@ function syncCopies() {
   return targets.every((t) => fs.readFileSync(t).equals(src));
 }
 
+/** 打包当天把构建日期固化进源 index.html 的 APP_BUILD_DATE 常量（本地时区 YYYY-MM-DD） */
+function stampBuildDate() {
+  const d = new Date();
+  const today = d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+  let html = fs.readFileSync(SRC_HTML, 'utf8');
+  if (!/APP_BUILD_DATE\s*=\s*'[^']*'/.test(html)) {
+    console.error('  ✗ 源 index.html 里找不到 APP_BUILD_DATE 常量');
+    process.exit(1);
+  }
+  html = html.replace(/APP_BUILD_DATE\s*=\s*'[^']*'/, `APP_BUILD_DATE = '${today}'`);
+  fs.writeFileSync(SRC_HTML, html);
+  console.log('  ✓ 构建日期固化为 ' + today);
+}
+
 /* ---------- Gradle ---------- */
 
 function runGradle(variant, jdk, gradleHome) {
@@ -244,7 +260,8 @@ async function main() {
   }
 
   // ② 同步副本：改完 index.html 忘了同步是这里最常见的事故
-  console.log('[2/5] 同步网页副本');
+  console.log('[2/5] 固化构建日期并同步网页副本');
+  stampBuildDate();
   if (!syncCopies()) {
     console.error('\n  ✗ 副本同步后仍与源文件不一致，已中止。');
     process.exit(1);
